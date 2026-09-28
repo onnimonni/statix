@@ -1,0 +1,7 @@
+---
+source: bin/tests/shellcheck.rs
+---
+{ packages = [ (pkgs.writeShellScriptBin "list" ''
+  for f in $(ls *.txt); do echo "$f"; done
+'') ]; }
+---

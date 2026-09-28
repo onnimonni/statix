@@ -7,3 +7,7 @@ source: bin/tests/devenv_exec_shebang.rs
 ''; }
 ---
 <temp_file_path>>1:24:W:24:[devenv_exec_shebang] devenv runs `scripts.<name>.exec` with bash, this shebang is ignored; set `package` to choose the interpreter
+<temp_file_path>>3:3:E:28:[shellcheck] SC1073: Couldn't parse this function. Fix to allow more checks.
+<temp_file_path>>3:9:E:28:[shellcheck] SC1065: Trying to declare parameters? Don't. Use () and refer to params as $1, $2..
+<temp_file_path>>4:1:E:28:[shellcheck] SC1064: Expected a { to open the function definition.
+<temp_file_path>>4:1:E:28:[shellcheck] SC1072:  Fix any mentioned problems and try again.

@@ -53,3 +53,36 @@ pub fn enclosing_attrpath(node: &SyntaxNode) -> Option<Vec<String>> {
     }
     Some(keys)
 }
+
+const SHELL_PACKAGES: &[&str] = &["bash", "bashInteractive"];
+
+/// Is there a sibling `package = pkgs.<not bash>;` next to this `exec`?
+pub fn has_non_shell_package(exec: &rnix::ast::AttrpathValue) -> bool {
+    use rnix::ast::HasEntry as _;
+    use rowan::ast::AstNode as _;
+    let Some(exec_keys) = exec
+        .attrpath()
+        .map(|p| p.attrs().filter_map(|a| attr_name(&a)).collect::<Vec<_>>())
+    else {
+        return false;
+    };
+    let Some(set) = exec.syntax().parent().and_then(rnix::ast::AttrSet::cast) else {
+        return false;
+    };
+    let mut package_keys = exec_keys;
+    package_keys.pop();
+    package_keys.push("package".into());
+
+    set.attrpath_values().any(|sibling| {
+        let keys: Vec<_> = sibling
+            .attrpath()
+            .map(|p| p.attrs().filter_map(|a| attr_name(&a)).collect())
+            .unwrap_or_default();
+        let Some(value) = sibling.value() else {
+            return false;
+        };
+        let value = value.syntax().to_string();
+        let last = value.trim().rsplit('.').next().unwrap_or_default();
+        keys == package_keys && !SHELL_PACKAGES.contains(&last)
+    })
+}

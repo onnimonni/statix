@@ -1,6 +1,7 @@
 #![recursion_limit = "1024"]
 mod lints;
 mod make;
+mod shell;
 mod utils;
 
 pub use lints::LINTS;

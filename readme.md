@@ -156,6 +156,7 @@ devenv_exec_shebang
 devenv_pre_commit
 hardcoded_store_path
 impure_host_path
+shellcheck
 ```
 
 All lints are enabled by default. Generate a minimal config

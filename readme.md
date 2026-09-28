@@ -159,12 +159,24 @@ for findings in referenced scripts.
 
 ### As a git hook in a devenv project
 
-`devenv.yaml`:
+`devenv.yaml` (devenv's git hooks need the `git-hooks` input too):
 
 ```yaml
 inputs:
+  git-hooks:
+    url: github:cachix/git-hooks.nix
+    inputs:
+      nixpkgs:
+        follows: nixpkgs
   statix:
-    url: github:onnimonni/statix
+    url: github:onnimonni/statix # or pin a release: github:onnimonni/statix/v0.7.0
+```
+
+or add them with:
+
+```shell
+devenv inputs add git-hooks github:cachix/git-hooks.nix --follows nixpkgs
+devenv inputs add statix github:onnimonni/statix
 ```
 
 `devenv.nix`:
@@ -195,6 +207,10 @@ in
   };
 }
 ```
+
+`devenv shell` installs the hook. Run it on everything with
+`prek run --all-files` (or `pre-commit run --all-files`), and give an agent
+what's left with `statix check -o agent .`.
 
 Binaries without Nix (statix only; install `shellcheck` and `ruff`
 separately for the script lints) are attached to

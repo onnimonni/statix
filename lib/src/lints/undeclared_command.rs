@@ -413,7 +413,7 @@ fn check_declared(
     available: &dyn Fn(&str, &str) -> Option<bool>,
     at: TextRange,
 ) -> Option<Finding> {
-    if declared.commands.iter().any(|c| c == name) {
+    if declared.commands.contains(name) {
         return None;
     }
     let mut undeclared = Vec::new();

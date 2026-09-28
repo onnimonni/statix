@@ -62,17 +62,39 @@ pub fn enclosing_attrpath(node: &SyntaxNode) -> Option<Vec<String>> {
 pub fn sibling_package(exec: &rnix::ast::AttrpathValue) -> Option<String> {
     use rnix::ast::HasEntry as _;
     use rowan::ast::AstNode as _;
+    type Packages = std::rc::Rc<std::collections::HashMap<Vec<String>, String>>;
+    // `...package = ...` bindings of the set, kept for its other scripts
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(rowan::SyntaxNode<rnix::NixLanguage>, Packages)>> =
+            const { std::cell::RefCell::new(None) };
+    }
     let keys = |apv: &rnix::ast::AttrpathValue| -> Vec<String> {
         apv.attrpath()
             .map(|p| p.attrs().filter_map(|a| attr_name(&a)).collect())
             .unwrap_or_default()
     };
-    let set = rnix::ast::AttrSet::cast(exec.syntax().parent()?)?;
+    let set_node = exec.syntax().parent()?;
+    let set = rnix::ast::AttrSet::cast(set_node.clone())?;
+    let packages = LAST.with(|last| {
+        if let Some((node, p)) = &*last.borrow()
+            && *node == set_node
+        {
+            return p.clone();
+        }
+        let p: Packages = std::rc::Rc::new(
+            set.attrpath_values()
+                .filter_map(|sibling| {
+                    let k = keys(&sibling);
+                    (k.last().map(String::as_str) == Some("package"))
+                        .then(|| Some((k, sibling.value()?.syntax().to_string())))?
+                })
+                .collect(),
+        );
+        *last.borrow_mut() = Some((set_node.clone(), p.clone()));
+        p
+    });
     let mut package_keys = keys(exec);
     package_keys.pop();
     package_keys.push("package".into());
-    set.attrpath_values()
-        .find(|sibling| keys(sibling) == package_keys)
-        .and_then(|sibling| sibling.value())
-        .map(|value| value.syntax().to_string())
+    packages.get(&package_keys).cloned()
 }

@@ -9,6 +9,7 @@ use rnix::{
     ast::{self, AttrpathValue, BinOpKind, Expr, HasEntry as _, UnaryOpKind},
 };
 use rowan::ast::AstNode as _;
+use std::collections::HashMap;
 
 /// A platform condition, evaluated per system as true, false or unknown.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +96,8 @@ pub struct Declared {
     pub place: &'static str,
     pub packages: Vec<Package>,
     /// Commands declared directly (devenv script names, ...).
-    pub commands: Vec<String>,
+    /// Shared by all scripts of a file (cheap to clone).
+    pub commands: std::rc::Rc<std::collections::HashSet<String>>,
     /// Platforms the script runs on (systemd: Linux, `meta.platforms`).
     pub platforms: Option<Cond>,
     /// Some declarations couldn't be read (unknown expressions, imports):
@@ -520,7 +522,7 @@ fn add_package_list(apv: &AttrpathValue, out: &mut Declared) {
 /// devenv: `packages`, `scripts.<n>.packages`, script names, stdenv, enabled
 /// languages and services.
 fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
-    type PerScript = std::rc::Rc<Vec<(String, AttrpathValue)>>;
+    type PerScript = std::rc::Rc<HashMap<String, Vec<AttrpathValue>>>;
     // the same for every script in the file: keep the last file's
     thread_local! {
         static LAST: std::cell::RefCell<Option<(SyntaxNode, Declared, PerScript)>> =
@@ -543,17 +545,15 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
     if cond != Cond::True {
         out.platforms = Some(cond);
     }
-    for (n, apv) in per_script.iter() {
-        if Some(n.as_str()) == name {
-            add_package_list(apv, &mut out);
-        }
+    for apv in name.and_then(|n| per_script.get(n)).into_iter().flatten() {
+        add_package_list(apv, &mut out);
     }
     out
 }
 
 /// devenv declarations of the whole file, and `scripts.<name>.packages`.
-fn devenv_file(root: &SyntaxNode) -> (Declared, Vec<(String, AttrpathValue)>) {
-    let mut per_script = Vec::new();
+fn devenv_file(root: &SyntaxNode) -> (Declared, HashMap<String, Vec<AttrpathValue>>) {
+    let mut per_script: HashMap<String, Vec<AttrpathValue>> = HashMap::new();
     let mut out = Declared {
         place: "packages",
         devenv: true,
@@ -566,9 +566,9 @@ fn devenv_file(root: &SyntaxNode) -> (Declared, Vec<(String, AttrpathValue)>) {
             at: TextRange::default(),
         });
     }
-    out.commands.push("devenv".into());
-    out.commands
-        .extend(DEVENV_FUNCTIONS.iter().map(|f| (*f).to_string()));
+    let commands = std::rc::Rc::make_mut(&mut out.commands);
+    commands.insert("devenv".into());
+    commands.extend(DEVENV_FUNCTIONS.iter().map(|f| (*f).to_string()));
     out.incomplete |= inherits(root, &["packages"]);
     for (path, apv) in bindings(root).iter() {
         let p: Vec<&str> = path.iter().map(String::as_str).collect();
@@ -577,11 +577,12 @@ fn devenv_file(root: &SyntaxNode) -> (Declared, Vec<(String, AttrpathValue)>) {
             ["packages"] | ["languages", _, "package"] => add_package_list(apv, &mut out),
             ["scripts", n, rest @ ..] => {
                 if rest == ["packages"] {
-                    per_script.push(((*n).to_string(), apv.clone()));
+                    per_script
+                        .entry((*n).to_string())
+                        .or_default()
+                        .push(apv.clone());
                 }
-                if !out.commands.iter().any(|c| c == n) {
-                    out.commands.push((*n).to_string());
-                }
+                std::rc::Rc::make_mut(&mut out.commands).insert((*n).to_string());
             }
             ["imports"] => out.incomplete = true,
             ["languages", lang, "enable"] => {
@@ -853,7 +854,7 @@ mod tests {
                 && a.contains(&"coreutils"),
             "{a:?}"
         );
-        assert!(d.commands.contains(&"b".to_string()));
+        assert!(d.commands.contains("b"));
         assert!(!d.incomplete);
     }
 
@@ -868,7 +869,7 @@ mod tests {
             "{:?}",
             attrs(&d)
         );
-        assert!(d.commands.contains(&"frontend-check".to_string()));
+        assert!(d.commands.contains("frontend-check"));
     }
 
     #[test]

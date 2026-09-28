@@ -37,9 +37,10 @@ pub enum SubCommand {
 
 #[derive(Parser, Debug)]
 pub struct Check {
-    /// File or directory to run check on
+    /// Files or directories to run check on. For script files (`.sh`,
+    /// `.py`...), the `.nix` files under `.` that refer to them are checked.
     #[clap(default_value = ".")]
-    target: PathBuf,
+    targets: Vec<PathBuf>,
 
     /// Globs of file patterns to skip
     #[clap(short, long)]
@@ -76,18 +77,18 @@ impl Check {
             Ok(ReadOnlyVfs::singleton("<stdin>", src.as_bytes()))
         } else {
             let all_ignores = [self.ignore.as_slice(), extra_ignores].concat();
-            dirs::check_path_exists(&self.target)?;
-            let files = dirs::walk_nix_files(&self.target, &all_ignores, self.unrestricted)?;
-            Ok(vfs(&files.collect::<Vec<_>>()))
+            let files = nix_files_for(&self.targets, &all_ignores, self.unrestricted)?;
+            Ok(vfs(&files))
         }
     }
 }
 
 #[derive(Parser, Debug)]
 pub struct Fix {
-    /// File or directory to run fix on
+    /// Files or directories to run fix on. For script files (`.sh`,
+    /// `.py`...), the `.nix` files under `.` that refer to them are fixed.
     #[clap(default_value = ".")]
-    target: PathBuf,
+    targets: Vec<PathBuf>,
 
     /// Globs of file patterns to skip
     #[clap(short, long)]
@@ -130,9 +131,8 @@ impl Fix {
             Ok(ReadOnlyVfs::singleton("<stdin>", src.as_bytes()))
         } else {
             let all_ignores = [self.ignore.as_slice(), extra_ignores].concat();
-            dirs::check_path_exists(&self.target)?;
-            let files = dirs::walk_nix_files(&self.target, &all_ignores, self.unrestricted)?;
-            Ok(vfs(&files.collect::<Vec<_>>()))
+            let files = nix_files_for(&self.targets, &all_ignores, self.unrestricted)?;
+            Ok(vfs(&files))
         }
     }
 
@@ -350,6 +350,42 @@ impl FromStr for WarningCode {
             _ => Ok(Self(0)),
         }
     }
+}
+
+/// The `.nix` files to process for `targets`: `.nix` files and directories as
+/// given, and for script files (e.g. changed files passed by a git hook) the
+/// `.nix` files under `.` that refer to them.
+fn nix_files_for(
+    targets: &[PathBuf],
+    ignores: &[String],
+    unrestricted: bool,
+) -> Result<Vec<PathBuf>, ConfigErr> {
+    use rayon::prelude::*;
+    let mut files = Vec::new();
+    let mut scripts = Vec::new();
+    for target in targets {
+        dirs::check_path_exists(target)?;
+        if target.is_file() && target.extension().is_none_or(|e| e != "nix") {
+            scripts.extend(fs::canonicalize(target));
+        } else {
+            files.extend(dirs::walk_nix_files(target, ignores, unrestricted)?);
+        }
+    }
+    if !scripts.is_empty() {
+        let candidates: Vec<PathBuf> = dirs::walk_nix_files(".", ignores, unrestricted)?.collect();
+        files.par_extend(candidates.into_par_iter().filter(|nix| {
+            let Ok(src) = fs::read_to_string(nix) else {
+                return false;
+            };
+            lib::referenced_files(&src, nix)
+                .iter()
+                .filter_map(|(path, _, _)| fs::canonicalize(path).ok())
+                .any(|path| scripts.contains(&path))
+        }));
+    }
+    let mut seen = std::collections::HashSet::new();
+    files.retain(|f| seen.insert(fs::canonicalize(f).unwrap_or_else(|_| f.clone())));
+    Ok(files)
 }
 
 fn vfs(files: &[PathBuf]) -> vfs::ReadOnlyVfs {

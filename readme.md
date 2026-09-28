@@ -169,7 +169,7 @@ inputs:
       nixpkgs:
         follows: nixpkgs
   statix:
-    url: github:onnimonni/statix # or pin a release: github:onnimonni/statix/v0.7.0
+    url: github:onnimonni/statix # or pin a release tag: github:onnimonni/statix/<tag>
 ```
 
 or add them with:
@@ -194,23 +194,31 @@ in
   git-hooks.hooks.statix = {
     enable = true;
     package = statix;
-    # fix what can be fixed (Nix files and the scripts they refer to), then
-    # fail on anything left or changed so the fixes get reviewed and staged
+    # Fix what can be fixed in the changed files, then fail on anything left
+    # or changed, so the fixes get reviewed and staged. A changed script
+    # (.sh/.py) is checked through the .nix files that refer to it.
     entry = toString (
       pkgs.writeShellScript "statix-hook" ''
-        ${statix}/bin/statix fix .
-        ${statix}/bin/statix check .
+        ${statix}/bin/statix fix "$@"
+        ${statix}/bin/statix check "$@"
       ''
     );
     files = "\\.(nix|sh|bash|py)$";
-    pass_filenames = false;
+    # the hook gets the staged files; don't run batches of them in parallel
+    require_serial = true;
   };
 }
 ```
 
-`devenv shell` installs the hook. Run it on everything with
-`prek run --all-files` (or `pre-commit run --all-files`), and give an agent
-what's left with `statix check -o agent .`.
+`devenv shell` installs the hook. On `git commit` it runs on the staged
+files only, so its cost grows with the change, not the repository. When it
+fixes something the commit stops: review the changes, `git add` them and
+commit again.
+
+Run it on the whole repository with `prek run statix --all-files` (or
+`pre-commit run statix --all-files`), or directly with `statix fix . &&
+statix check .`. Give a coding agent what's left with
+`statix check -o agent .`.
 
 Binaries without Nix (statix only; install `shellcheck` and `ruff`
 separately for the script lints) are attached to

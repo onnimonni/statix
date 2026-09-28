@@ -11,7 +11,7 @@ fn check(nix: &str) -> String {
 
     let linux = root.join("linux.tsv");
     let darwin = root.join("darwin.tsv");
-    let common = "jq\tbin\tjq\ncurl\tbin\tcurl\nripgrep\tout\trg\ncoreutils\tout\tls\ncoreutils\tout\tcat\ncoreutils\tout\tuname\npnpm\tout\tpnpm\nnodejs\tout\tnode\ngit\tout\tgit\n";
+    let common = "jq\tbin\tjq\ncurl\tbin\tcurl\nripgrep\tout\trg\ncoreutils\tout\tls\ncoreutils\tout\tcat\ncoreutils\tout\tuname\npnpm\tout\tpnpm\nnodejs\tout\tnode\ngit\tout\tgit\ngnused\tout\tsed\n";
     fs::write(
         &linux,
         format!("{common}strace\tout\tstrace\nxclip\tout\txclip\n"),
@@ -227,6 +227,41 @@ fn codex_review_missed_findings() {
             "2:3:W:31:[undeclared_command] Unknown statix directive `platforms=bsd`",
             "4:5:W:31:[undeclared_command] `/run/current-system/sw/bin/foo` depends on the host system",
             "5:5:W:31:[undeclared_command] `pkgs.jq` has no program `jqq`",
+        ]
+    );
+}
+
+#[test]
+fn sed_in_place_on_darwin() {
+    // devenv shells have GNU sed; writeShellApplication uses the host's
+    let out = check(
+        r#"{ pkgs, ... }: {
+  scripts.a.exec = "sed -i 's/a/b/' x";
+  b = pkgs.writeShellApplication {
+    name = "b";
+    text = ''
+      sed -i 's/a/b/' x
+      grep x y | touch z
+    '';
+  };
+  c = pkgs.writeShellApplication {
+    name = "c";
+    text = "sed -n p x; sed -i.bak 's/a/b/' x";
+  };
+  d = pkgs.writeShellApplication {
+    name = "d";
+    runtimeInputs = [ pkgs.gnused ];
+    text = "sed -i 's/a/b/' x";
+  };
+}
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "6:7:W:31:[undeclared_command] `sed -i` isn't portable: macOS sed needs `-i ''`, which GNU sed rejects",
+            "12:13:W:31:[undeclared_command] `sed` isn't declared",
         ]
     );
 }

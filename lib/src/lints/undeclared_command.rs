@@ -141,7 +141,19 @@ fn unknown_directive(unknown: &[String]) -> String {
 }
 
 /// Commands every host has, never reported.
-const ALWAYS_AVAILABLE: &[&str] = &["rm", "mkdir", "cat", "cp", "mv"];
+const ALWAYS_AVAILABLE: &[&str] = &[
+    "rm", "mkdir", "cat", "cp", "mv", "grep", "ln", "chown", "touch",
+];
+
+/// `sed -i` without an attached suffix: GNU sed takes `-i`, macOS (BSD) sed
+/// needs `-i ''`, which GNU sed rejects. `-i.bak` works on both.
+fn sed_in_place(u: &Use) -> bool {
+    u.args.iter().flatten().any(|a| {
+        a == "--in-place"
+            || a.starts_with("--in-place=")
+            || (a.starts_with('-') && !a.starts_with("--") && a.ends_with('i'))
+    })
+}
 
 fn systems_text(systems: &[String]) -> String {
     systems.join(", ")
@@ -321,7 +333,21 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
         } else if opaque {
             None
         } else {
-            check_declared(name, declared, programs, &effective, &available, at)
+            check_declared(name, declared, programs, &effective, &available, at).map(|f| {
+                // the host's sed: GNU on Linux, BSD on macOS
+                let darwin = effective
+                    .iter()
+                    .any(|s| programs::platform_matches("darwin", s) == Some(true));
+                if name == "sed" && darwin && sed_in_place(u) {
+                    Finding {
+                        at: f.at,
+                        message: "`sed -i` isn't portable: macOS sed needs `-i ''`, which GNU sed rejects".into(),
+                        help: "Declare `pkgs.gnused` so every system runs GNU sed, or use an attached suffix that both accept (`sed -i.bak ... && rm file.bak`).".into(),
+                    }
+                } else {
+                    f
+                }
+            })
         };
         if let Some(f) = finding {
             reported.push(name.to_string());

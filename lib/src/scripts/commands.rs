@@ -114,6 +114,8 @@ pub struct Use {
     pub start: usize,
     pub end: usize,
     pub lookup: Lookup,
+    /// Its arguments' static text (`None` when dynamic).
+    pub args: Vec<Option<String>>,
 }
 
 /// Commands found in a script.
@@ -565,7 +567,7 @@ impl Walker {
         }
     }
 
-    fn record(&mut self, arg: &Arg, lookup: Lookup, src: &Source) {
+    fn record(&mut self, arg: &Arg, args: &[Arg], lookup: Lookup, src: &Source) {
         if let Some(name) = &arg.text
             && !name.is_empty()
         {
@@ -576,6 +578,7 @@ impl Walker {
                     start,
                     end,
                     lookup,
+                    args: args.iter().map(|a| a.text.clone()).collect(),
                 },
                 self.via.clone(),
             ));
@@ -694,7 +697,7 @@ impl Walker {
             }
         }
 
-        self.record(first, lookup, src);
+        self.record(first, rest, lookup, src);
         // `command sudo x`, `exec sudo x`: never a function, so no name that
         // could be one
         self.via.push(if lookup == Lookup::Any {

@@ -157,6 +157,49 @@ In `-o json` every diagnostic has `fixable` (whether `statix fix`
 handles it), `help` when it doesn't, and `external` (file, line, column)
 for findings in referenced scripts.
 
+### As a git hook in a devenv project
+
+`devenv.yaml`:
+
+```yaml
+inputs:
+  statix:
+    url: github:onnimonni/statix
+```
+
+`devenv.nix`:
+
+```nix
+{ pkgs, inputs, ... }:
+let
+  # statix with shellcheck and ruff for the script lints
+  statix = inputs.statix.packages.${pkgs.stdenv.system}.statix-scripts;
+in
+{
+  # prebuilt binaries, pushed by CI
+  cachix.pull = [ "onnimonni" ];
+
+  git-hooks.hooks.statix = {
+    enable = true;
+    package = statix;
+    # fix what can be fixed (Nix files and the scripts they refer to), then
+    # fail on anything left or changed so the fixes get reviewed and staged
+    entry = toString (
+      pkgs.writeShellScript "statix-hook" ''
+        ${statix}/bin/statix fix .
+        ${statix}/bin/statix check .
+      ''
+    );
+    files = "\\.(nix|sh|bash|py)$";
+    pass_filenames = false;
+  };
+}
+```
+
+Binaries without Nix (statix only; install `shellcheck` and `ruff`
+separately for the script lints) are attached to
+[releases](https://github.com/onnimonni/statix/releases).
+
 ### Configuration
 
 Ignore lints and fixes by creating a `statix.toml` file at

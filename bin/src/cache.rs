@@ -128,9 +128,12 @@ fn epoch(lints: &LintMap, conf: &ConfFile) -> String {
     let conf = toml::to_string(conf).unwrap_or_default();
     lib::content_hash(
         format!(
-            "{binary}\n{}\n{conf}\n{}",
+            "{binary}\n{}\n{conf}\n{}\n{}\n{}",
             names.join(","),
-            lib::tool_versions()
+            lib::tool_versions(),
+            // package indexes and systems `undeclared_command` checks
+            std::env::var("STATIX_PROGRAMS").unwrap_or_default(),
+            std::env::var("STATIX_SYSTEMS").unwrap_or_default()
         )
         .as_bytes(),
     )

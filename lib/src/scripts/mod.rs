@@ -1,9 +1,13 @@
 //! Scripts embedded in or referenced from Nix code: finding them, running
 //! the language's checker on them and applying its fixes.
 
+pub mod commands;
 pub mod context;
+pub mod declared;
+pub mod directives;
 pub mod fixes;
 pub mod nixstr;
+pub mod programs;
 mod tools;
 
 use std::{
@@ -95,6 +99,17 @@ pub fn with_current_file<R>(path: Option<&Path>, f: impl FnOnce() -> R) -> R {
     }
     let _restore = Restore(CURRENT_FILE.with(|c| c.replace(path.map(Path::to_path_buf))));
     f()
+}
+
+/// Whether the file being linted is named `name`.
+#[must_use]
+pub fn current_file_is(name: &str) -> bool {
+    CURRENT_FILE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .is_some_and(|n| n == name)
+    })
 }
 
 /// Directory of the file being linted.
@@ -500,12 +515,19 @@ pub struct Checked {
 }
 
 /// The script in `s`, if it is one, with its language and kind.
-fn script_of(s: &ast::Str) -> Option<(Script, Lang, Kind)> {
+pub fn script_of(s: &ast::Str) -> Option<(Script, Lang, Kind)> {
     // Strings interpolated into a script are checked as part of it.
     if s.syntax()
         .ancestors()
         .skip(1)
         .any(|a| a.kind() == rnix::SyntaxKind::NODE_STRING)
+    {
+        return None;
+    }
+    // `tasks."app:setup".exec`: attribute names aren't scripts
+    if s.syntax()
+        .parent()
+        .is_some_and(|p| p.kind() == rnix::SyntaxKind::NODE_ATTRPATH)
     {
         return None;
     }

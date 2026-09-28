@@ -25,15 +25,46 @@ let
       target = "x86_64-apple-darwin";
     }
   ];
+  # nix-index-database small indexes (programs in bin/sbin) for the systems
+  # `undeclared_command` checks; converted to `attr<TAB>output<TAB>program`
+  indexRelease = "2026-09-27-083517";
+  indexHashes = {
+    x86_64-linux = "sha256-9PU4T/8oicqb/qEhNU9hZ9Jh7gMIoZmKVc2jiRPHB3Q=";
+    aarch64-linux = "sha256-1TqhPiO2vYf46Uju0IaIPfmIR6bYutVS9QKQxar4Mj0=";
+    aarch64-darwin = "sha256-UIe55mh35D/TdE6VUqBndjJJZ7jC1eAvUkU8bVa5tao=";
+  };
 in
 {
   perSystem =
     { pkgs, lib, ... }:
+    let
+      programIndex =
+        system: hash:
+        pkgs.runCommand "statix-programs-${system}"
+          {
+            nativeBuildInputs = [ pkgs.nix-index ];
+            index = pkgs.fetchurl {
+              url = "https://github.com/nix-community/nix-index-database/releases/download/${indexRelease}/index-${system}-small";
+              inherit hash;
+            };
+          }
+          ''
+            mkdir db && ln -s $index db/files
+            nix-locate --db db --at-root --regex '/s?bin/[^/]+$' \
+              | awk '($3=="x"||$3=="s") && split($4,p,"/")==6 && (p[5]=="bin"||p[5]=="sbin") {
+                  a=$1; o=a; sub(/\.[^.]*$/,"",a); sub(/.*\./,"",o); print a"\t"o"\t"p[6] }' \
+              | sort -u > $out
+            test -s $out
+          '';
+      programs = lib.concatStringsSep ":" (
+        lib.mapAttrsToList (system: hash: "${system}=${programIndex system hash}") indexHashes
+      );
+    in
     {
       packages = {
         default = pkgs.statix;
         inherit (pkgs) statix;
-        # statix with shellcheck and ruff for the script lints
+        # statix with shellcheck, ruff and the program indexes for the script lints
         statix-scripts = pkgs.symlinkJoin {
           name = "statix-scripts-${pkgs.statix.version}";
           paths = [ pkgs.statix ];
@@ -44,7 +75,7 @@ in
                 pkgs.shellcheck
                 pkgs.ruff
               ]
-            }
+            } --set-default STATIX_PROGRAMS ${lib.escapeShellArg programs}
           '';
           meta.mainProgram = "statix";
         };

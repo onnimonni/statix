@@ -249,6 +249,55 @@ Binaries without Nix (statix only; install `shellcheck` and `ruff`
 separately for the script lints) are attached to
 [releases](https://github.com/onnimonni/statix/releases).
 
+### Undeclared commands
+
+`undeclared_command` parses shell scripts (with
+[brush-parser](https://github.com/reubeno/brush), following
+[resholve](https://github.com/abathur/resholve)'s rules for builtins,
+functions, aliases and commands that run other commands like `sudo`,
+`xargs`, `find -exec`) and reports commands that won't be found:
+
+- commands not declared where the script runs: devenv `packages`,
+  `scripts.<name>.packages`, enabled `languages`/`services`/modules and
+  other `scripts` (a devenv script's name is a command in the others);
+  `writeShellApplication` `runtimeInputs`; NixOS systemd `path` and its
+  default path. `rm` is always available. When declarations can't be
+  known (`imports`, computed lists) nothing is reported.
+- packages not available on a checked system: x86_64-linux,
+  aarch64-linux and the system statix runs on, from
+  [nix-index-database](https://github.com/nix-community/nix-index-database)
+  (`statix-scripts` includes it; point `STATIX_PROGRAMS` at
+  `system=file.tsv:...` otherwise, or statix falls back to a small
+  built-in table). Platform conditions are read from Nix:
+  `lib.optionals stdenv.isDarwin [...]`, `lib.mkIf`, `if`,
+  `pkgs.system == ...`, `meta.platforms`, NixOS modules (Linux).
+- `${pkgs.jq}/bin/jqq` and `lib.getExe' pkgs.jq "jqq"`: the package has
+  no such program.
+- absolute host paths (`/run/current-system/sw/bin/x`) and missing
+  relative ones (`./x.sh` next to `devenv.nix`).
+
+Commands checked with `command -v`, `type`, `hash`, `which` or `[ -x ./x ]`
+are optional. Directives in the script (shellcheck style, before the first
+command for the whole script, otherwise for the next command):
+
+```bash
+# statix platforms=darwin          # only runs on macOS
+pbcopy < out.txt
+# statix provided=osascript,open   # comes from the host
+# statix disable=undeclared_command
+```
+
+Platforms are `darwin`, `linux`, `aarch64`, `x86_64`, `unix`, `all` or a
+system like `aarch64-darwin`. The same `# statix platforms=...` comment
+works before a package in a Nix list. In `statix.toml`:
+
+```toml
+systems = ["x86_64-linux", "aarch64-darwin"]  # systems to check
+provided = ["docker"]                          # commands the host provides
+```
+
+`STATIX_SYSTEMS=x86_64-linux,aarch64-darwin` overrides `systems`.
+
 ### Configuration
 
 Ignore lints and fixes by creating a `statix.toml` file at
@@ -296,6 +345,7 @@ impure_host_path
 shellcheck
 ruff
 script_file
+undeclared_command
 ```
 
 All lints are enabled by default. Generate a minimal config

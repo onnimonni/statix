@@ -305,6 +305,14 @@ pub struct ConfFile {
 
     #[serde(default = "Vec::new")]
     pub ignore: Vec<String>,
+
+    /// Systems `undeclared_command` checks commands on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub systems: Option<Vec<String>>,
+
+    /// Commands the environment provides, never reported as undeclared.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provided: Vec<String>,
 }
 
 impl ConfFile {
@@ -332,12 +340,21 @@ impl ConfFile {
         let ideal_config = {
             let disabled = vec![];
             let ignore = vec![".direnv".into()];
-            Self { disabled, ignore }
+            Self {
+                disabled,
+                ignore,
+                ..Self::default()
+            }
         };
         toml::ser::to_string_pretty(&ideal_config).unwrap()
     }
     #[must_use]
     pub fn lints(&self) -> LintMap {
+        // settings of the script lints, read by them while linting
+        lib::set_script_settings(lib::ScriptSettings {
+            systems: self.systems.clone(),
+            provided: self.provided.clone(),
+        });
         utils::lint_map_of(
             (*LINTS)
                 .iter()

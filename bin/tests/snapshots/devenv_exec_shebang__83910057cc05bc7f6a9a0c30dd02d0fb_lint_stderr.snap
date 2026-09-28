@@ -15,3 +15,10 @@ source: bin/tests/devenv_exec_shebang.rs
    │ │                 
    │ ╰───────────────── devenv runs processes.<name>.exec with bash, this shebang is ignored; set package to choose the interpreter
 ───╯
+[undeclared_command] Warning: Command in a shell script isn't declared or doesn't exist
+   ╭─[ <temp_file_path>:3:3 ]
+   │
+ 3 │   serve
+   │   ──┬──  
+   │     ╰──── serve isn't declared
+───╯

@@ -150,6 +150,92 @@ fn devenv_context(apv: &AttrpathValue, path: &[&str]) -> Option<(Lang, Kind)> {
     Some((lang, Kind::Script))
 }
 
+/// Functions whose last argument ends up in the option value.
+const VALUE_WRAPPERS: &[&str] = &[
+    "mkIf",
+    "mkBefore",
+    "mkAfter",
+    "mkDefault",
+    "mkForce",
+    "mkOverride",
+    "mkOrder",
+    "mkMerge",
+    "mkOptionDefault",
+    "optionalString",
+    "concatStrings",
+    "concatStringsSep",
+    "concatLines",
+];
+
+/// Whether `node` is the value `value` (`Some(true)`) or a piece of it,
+/// like `"--verbose " + ...` (`Some(false)`); `None` when it isn't part of
+/// the value, e.g. the condition of `lib.mkIf (lib.versionOlder v "2.0") ''...''`.
+fn value_part(node: &SyntaxNode, value: &SyntaxNode) -> Option<bool> {
+    let mut whole = true;
+    let mut cur = node.clone();
+    while &cur != value {
+        let parent = cur.parent()?;
+        let ok = match parent.kind() {
+            SyntaxKind::NODE_PAREN => true,
+            // concatenated pieces aren't whole scripts
+            SyntaxKind::NODE_BIN_OP => {
+                whole = false;
+                true
+            }
+            // lib.mkMerge [ ''...'' ], lib.concatLines [ ... ]: whole lines
+            SyntaxKind::NODE_LIST => {
+                whole &= parent
+                    .parent()
+                    .and_then(ast::Apply::cast)
+                    .and_then(|a| a.lambda())
+                    .and_then(|f| fn_name(&f))
+                    .is_some_and(|f| f == "mkMerge" || f == "concatLines");
+                true
+            }
+            SyntaxKind::NODE_IF_ELSE => ast::IfElse::cast(parent.clone())
+                .and_then(|i| i.condition())
+                .is_none_or(|c| c.syntax() != &cur),
+            SyntaxKind::NODE_LET_IN => ast::LetIn::cast(parent.clone())
+                .and_then(|l| l.body())
+                .is_some_and(|b| b.syntax() == &cur),
+            SyntaxKind::NODE_WITH => ast::With::cast(parent.clone())
+                .and_then(|w| w.body())
+                .is_some_and(|b| b.syntax() == &cur),
+            SyntaxKind::NODE_APPLY => {
+                let apply = ast::Apply::cast(parent.clone());
+                let is_argument = apply
+                    .as_ref()
+                    .and_then(ast::Apply::argument)
+                    .is_some_and(|a| a.syntax() == &cur);
+                // the last argument: `parent` isn't applied to more
+                let last = parent
+                    .parent()
+                    .and_then(ast::Apply::cast)
+                    .and_then(|a| a.lambda())
+                    .is_none_or(|l| l.syntax() != &parent);
+                let name = apply.and_then(|a| a.lambda()).and_then(|mut f| {
+                    while let Expr::Apply(inner) = f {
+                        f = inner.lambda()?;
+                    }
+                    fn_name(&f)
+                });
+                if is_argument
+                    && matches!(name.as_deref(), Some("concatStrings" | "concatStringsSep"))
+                {
+                    whole = false;
+                }
+                !is_argument || (last && name.is_some_and(|n| VALUE_WRAPPERS.contains(&n.as_str())))
+            }
+            _ => false,
+        };
+        if !ok {
+            return None;
+        }
+        cur = parent;
+    }
+    Some(whole)
+}
+
 /// Options whose value is a script: devenv, NixOS systemd and activation
 /// scripts, stdenv phases.
 fn option_context(node: &SyntaxNode) -> Option<(Lang, Kind)> {
@@ -158,10 +244,16 @@ fn option_context(node: &SyntaxNode) -> Option<(Lang, Kind)> {
     if apv.syntax().parent()?.kind() == SyntaxKind::NODE_LET_IN {
         return None;
     }
+    let whole = value_part(node, apv.value()?.syntax())?;
+    let (lang, kind) = option_script(&apv)?;
+    Some((lang, if whole { kind } else { Kind::Fragment }))
+}
+
+fn option_script(apv: &AttrpathValue) -> Option<(Lang, Kind)> {
     let path = utils::enclosing_attrpath(apv.syntax())?;
     let path: Vec<&str> = path.iter().map(String::as_str).collect();
     let path = path.strip_prefix(&["config"]).unwrap_or(&path);
-    if let Some(context) = devenv_context(&apv, path) {
+    if let Some(context) = devenv_context(apv, path) {
         return Some(context);
     }
 

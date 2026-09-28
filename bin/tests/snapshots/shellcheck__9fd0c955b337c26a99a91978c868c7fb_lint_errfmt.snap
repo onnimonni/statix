@@ -4,3 +4,4 @@ source: bin/tests/shellcheck.rs
 { processes.web.exec = "cd $HOME && serve"; }
 ---
 <temp_file_path>>1:28:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>1:37:W:31:[undeclared_command] `serve` isn't declared

@@ -10,6 +10,7 @@ license = "MIT"
 [workspace.dependencies]
 anyhow = "*"
 ariadne = "*"
+brush-parser = "*"
 clap = { features = ["derive"], version = "*" }
 hex = "*"
 ignore = "*"

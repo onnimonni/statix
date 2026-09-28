@@ -192,6 +192,14 @@ impl Script {
         ))
     }
 
+    /// Source bytes of the rendered char at byte offset `byte` of the text.
+    pub fn src_at(&self, byte: usize) -> Option<Src> {
+        let before = self.text.get(..byte)?;
+        let line = before.matches('\n').count();
+        let col = before.rsplit('\n').next().unwrap_or("").chars().count();
+        self.lines.get(line)?.chars.get(col).copied()
+    }
+
     /// Whether a 1-based line of the script contains a `${...}` placeholder.
     pub fn line_has_interp(&self, line: usize) -> bool {
         self.lines

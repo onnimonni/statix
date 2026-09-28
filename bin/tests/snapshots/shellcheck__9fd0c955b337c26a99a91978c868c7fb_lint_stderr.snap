@@ -10,3 +10,10 @@ source: bin/tests/shellcheck.rs
    │                            ──┬──  
    │                              ╰──── SC2086: Double quote to prevent globbing and word splitting.
 ───╯
+[undeclared_command] Warning: Command in a shell script isn't declared or doesn't exist
+   ╭─[ <temp_file_path>:1:37 ]
+   │
+ 1 │ { processes.web.exec = "cd $HOME && serve"; }
+   │                                     ──┬──  
+   │                                       ╰──── serve isn't declared
+───╯

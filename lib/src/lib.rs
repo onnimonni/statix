@@ -5,6 +5,7 @@ mod scripts;
 mod utils;
 
 pub use lints::LINTS;
+pub use scripts::programs::{Settings as ScriptSettings, set_settings as set_script_settings};
 pub use scripts::{
     Kind, Lang, StoredScript, content_hash, export_script_cache, fix_text, import_script_cache,
     nixstr::NIX_ESCAPING, prefetch, prefetch_scripts, referenced_files, script_cache_changed,

@@ -7,6 +7,7 @@ version = "0.0.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+brush-parser.workspace = true
 hex.workspace = true
 lazy_static.workspace = true
 macros.workspace = true

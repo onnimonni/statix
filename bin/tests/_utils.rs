@@ -11,6 +11,9 @@ pub fn test_cli(expression: &str, args: &[&str]) -> anyhow::Result<String> {
     let output = Command::new(env!("CARGO_BIN_EXE_statix"))
         .env("HOME", home.path())
         .env("XDG_CONFIG_HOME", home.path())
+        // same results on every machine
+        .env("STATIX_SYSTEMS", "x86_64-linux,aarch64-darwin")
+        .env_remove("STATIX_PROGRAMS")
         .args(args)
         .arg(fixture.path())
         .output()?;
@@ -25,6 +28,8 @@ pub fn test_cli(expression: &str, args: &[&str]) -> anyhow::Result<String> {
 #[allow(dead_code)]
 pub fn test_cli_stdin(input: &str, args: &[&str]) -> anyhow::Result<String> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_statix"))
+        .env("STATIX_SYSTEMS", "x86_64-linux,aarch64-darwin")
+        .env_remove("STATIX_PROGRAMS")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

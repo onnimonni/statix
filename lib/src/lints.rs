@@ -25,5 +25,6 @@ lints! {
     impure_host_path,
     shellcheck,
     ruff,
-    script_file
+    script_file,
+    undeclared_command
 }

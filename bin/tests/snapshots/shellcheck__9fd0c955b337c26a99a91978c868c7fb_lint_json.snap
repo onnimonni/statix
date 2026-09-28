@@ -40,6 +40,30 @@ source: bin/tests/shellcheck.rs
           "fixable": true
         }
       ]
+    },
+    {
+      "name": "undeclared_command",
+      "note": "Command in a shell script isn't declared or doesn't exist",
+      "code": 31,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 37
+            },
+            "to": {
+              "line": 1,
+              "column": 42
+            }
+          },
+          "message": "`serve` isn't declared",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Add the package providing `serve` to `packages`. If the environment provides it, add `# statix provided=serve` at the top of the script (or `provided = [ \"serve\" ]` in statix.toml); if it's optional, check for it with `command -v serve`."
+        }
+      ]
     }
   ]
 }

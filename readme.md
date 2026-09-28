@@ -318,6 +318,24 @@ Shell scripts writing such files with text known before they run
 (`cat > x.json <<'EOF'`, `echo '...' > x.yaml`) are reported too; runtime
 text (`$VAR`, `$(...)`) and appends (`>>`) aren't.
 
+### Shorter shell idioms
+
+`shell_idiom` teaches shorter commands for common sequences in shell
+scripts. `mkdir -p`, `cp`, `chmod`, `chown`/`chgrp` of one file are one
+`install`:
+
+```bash
+mkdir -p $out/bin              # install -Dm755 tool $out/bin/tool
+cp tool $out/bin/tool
+chmod 755 $out/bin/tool
+```
+
+With an explicit numeric mode it's a warning that `statix fix` rewrites.
+Without one it's a hint (shown, doesn't fail `statix check`): `install`
+sets mode 755 where `cp` keeps the source's, so add `-m 644` for data
+files. `-D` and `-t` are only suggested where GNU coreutils run the script
+(build phases, devenv, NixOS).
+
 ### Configuration
 
 Ignore lints and fixes by creating a `statix.toml` file at
@@ -367,6 +385,7 @@ ruff
 script_file
 undeclared_command
 structured_text_file
+shell_idiom
 ```
 
 All lints are enabled by default. Generate a minimal config

@@ -27,5 +27,6 @@ lints! {
     ruff,
     script_file,
     undeclared_command,
-    structured_text_file
+    structured_text_file,
+    shell_idiom
 }

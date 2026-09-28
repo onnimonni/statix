@@ -1,0 +1,18 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  cp -r dist $out
+  chmod 755 $out
+''; }
+---
+[shellcheck] Advice: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:2:14 ]
+   │
+ 2 │   cp -r dist $out
+   │              ──┬─  
+   │                ╰─── SC2086: Double quote to prevent globbing and word splitting.
+ 3 │   chmod 755 $out
+   │             ──┬─  
+   │               ╰─── SC2086: Double quote to prevent globbing and word splitting.
+───╯

@@ -1,0 +1,17 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  cp -r dist $out
+  chmod 755 $out
+''; }
+---
+--- <temp_file_path>
++++ <temp_file_path> [fixed]
+@@ -1,4 +1,4 @@
+ stdenv.mkDerivation { installPhase = ''
+-  cp -r dist $out
+-  chmod 755 $out
++  cp -r dist "$out"
++  chmod 755 "$out"
+ ''; }

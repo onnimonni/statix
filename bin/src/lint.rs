@@ -44,6 +44,11 @@ fn lints_of(parsed: &rnix::Parse<Root>, lints: &LintMap) -> Vec<Report> {
         .collect()
 }
 
+/// Whether a report fails `statix check`: warnings and errors, not hints.
+fn fails(report: &Report) -> bool {
+    !matches!(report.severity, lib::Severity::Hint)
+}
+
 /// Whether a lint that runs shellcheck or ruff is enabled.
 #[must_use]
 pub fn runs_checkers(lints: &LintMap) -> bool {
@@ -71,7 +76,7 @@ pub fn prefetch(sources: &[(&std::path::Path, &str)]) {
 pub mod main {
     use std::io;
 
-    use super::{lint_with, prefetch};
+    use super::{fails, lint_with, prefetch};
     use crate::{
         cache::Cache,
         config::{Check as CheckConfig, ConfFile},
@@ -131,7 +136,8 @@ pub mod main {
                 cache.touch(entry.file_path);
             }
             for (entry, result, refs) in &results {
-                let clean = result.reports.is_empty();
+                // hints don't make a file unclean
+                let clean = !result.reports.iter().any(fails);
                 cache.record(
                     entry.file_path,
                     entry.contents,
@@ -145,13 +151,15 @@ pub mod main {
         }
 
         let mut stdout = io::stdout();
-        let failed: Vec<_> = results
+        let reported: Vec<_> = results
             .iter()
             .filter(|(_, r, _)| !r.reports.is_empty())
             .collect();
-        for (_, r, _) in &failed {
+        for (_, r, _) in &reported {
             stdout.write(r, &vfs, check_config.format).unwrap();
         }
-        std::process::exit(i32::from(!failed.is_empty()));
+        // hints (suggestions) are shown but don't fail the check
+        let failed = reported.iter().any(|(_, r, _)| r.reports.iter().any(fails));
+        std::process::exit(i32::from(failed));
     }
 }

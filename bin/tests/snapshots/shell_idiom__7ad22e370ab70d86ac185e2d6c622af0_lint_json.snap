@@ -1,9 +1,9 @@
 ---
-source: bin/tests/shellcheck.rs
+source: bin/tests/shell_idiom.rs
 ---
 stdenv.mkDerivation { installPhase = ''
-  mkdir -p $out/bin
-  cp $src/tool $out/bin/
+  mkdir -p $out/share/doc
+  cp README.md NEWS $out/share/doc
 ''; }
 ---
 {
@@ -38,7 +38,7 @@ stdenv.mkDerivation { installPhase = ''
                 "column": 3
               }
             },
-            "fix": "''\n  mkdir -p \"$out\"/bin\n  cp \"$src\"/tool \"$out\"/bin/\n''"
+            "fix": "''\n  mkdir -p \"$out\"/share/doc\n  cp README.md NEWS \"$out\"/share/doc\n''"
           },
           "fixable": true
         },
@@ -46,26 +46,11 @@ stdenv.mkDerivation { installPhase = ''
           "at": {
             "from": {
               "line": 3,
-              "column": 6
+              "column": 21
             },
             "to": {
               "line": 3,
-              "column": 10
-            }
-          },
-          "message": "SC2086: Double quote to prevent globbing and word splitting.",
-          "suggestion": null,
-          "fixable": true
-        },
-        {
-          "at": {
-            "from": {
-              "line": 3,
-              "column": 16
-            },
-            "to": {
-              "line": 3,
-              "column": 20
+              "column": 25
             }
           },
           "message": "SC2086: Double quote to prevent globbing and word splitting.",
@@ -88,13 +73,13 @@ stdenv.mkDerivation { installPhase = ''
             },
             "to": {
               "line": 3,
-              "column": 25
+              "column": 35
             }
           },
           "message": "`mkdir -p` + `cp` can be one `install`",
           "suggestion": null,
           "fixable": false,
-          "help": "Use `install -D $src/tool $out/bin/tool`. It sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files."
+          "help": "Use `install -D -t $out/share/doc README.md NEWS`. It sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files."
         }
       ]
     }

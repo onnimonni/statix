@@ -6,6 +6,7 @@ pub mod context;
 pub mod declared;
 pub mod directives;
 pub mod fixes;
+pub mod idioms;
 pub mod nixstr;
 pub mod programs;
 mod tools;

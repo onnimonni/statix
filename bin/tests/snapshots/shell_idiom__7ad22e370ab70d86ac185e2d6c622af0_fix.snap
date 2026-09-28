@@ -1,0 +1,17 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  mkdir -p $out/share/doc
+  cp README.md NEWS $out/share/doc
+''; }
+---
+--- <temp_file_path>
++++ <temp_file_path> [fixed]
+@@ -1,4 +1,4 @@
+ stdenv.mkDerivation { installPhase = ''
+-  mkdir -p $out/share/doc
+-  cp README.md NEWS $out/share/doc
++  mkdir -p "$out"/share/doc
++  cp README.md NEWS "$out"/share/doc
+ ''; }

@@ -1,0 +1,63 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  cp -r dist $out
+  chmod 755 $out
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Hint",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 14
+            },
+            "to": {
+              "line": 2,
+              "column": 18
+            }
+          },
+          "message": "SC2086: Double quote to prevent globbing and word splitting.",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 38
+              },
+              "to": {
+                "line": 4,
+                "column": 3
+              }
+            },
+            "fix": "''\n  cp -r dist \"$out\"\n  chmod 755 \"$out\"\n''"
+          },
+          "fixable": true
+        },
+        {
+          "at": {
+            "from": {
+              "line": 3,
+              "column": 13
+            },
+            "to": {
+              "line": 3,
+              "column": 17
+            }
+          },
+          "message": "SC2086: Double quote to prevent globbing and word splitting.",
+          "suggestion": null,
+          "fixable": true
+        }
+      ]
+    }
+  ]
+}

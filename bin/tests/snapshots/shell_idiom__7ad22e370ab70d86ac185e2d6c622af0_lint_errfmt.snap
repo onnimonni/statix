@@ -1,0 +1,11 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  mkdir -p $out/share/doc
+  cp README.md NEWS $out/share/doc
+''; }
+---
+<temp_file_path>>2:12:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>3:21:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>2:3:I:33:[shell_idiom] `mkdir -p` + `cp` can be one `install`

@@ -1,0 +1,31 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  mkdir -p $out/bin
+  cp tool $out/bin/tool
+  chmod 755 $out/bin/tool
+''; }
+---
+[shellcheck] Advice: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:2:12 ]
+   │
+ 2 │   mkdir -p $out/bin
+   │            ──┬─  
+   │              ╰─── SC2086: Double quote to prevent globbing and word splitting.
+ 3 │   cp tool $out/bin/tool
+   │           ──┬─  
+   │             ╰─── SC2086: Double quote to prevent globbing and word splitting.
+ 4 │   chmod 755 $out/bin/tool
+   │             ──┬─  
+   │               ╰─── SC2086: Double quote to prevent globbing and word splitting.
+───╯
+[shell_idiom] Warning: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │ ╭─▶   mkdir -p $out/bin
+   ┆ ┆   
+ 4 │ ├─▶   chmod 755 $out/bin/tool
+   │ │                               
+   │ ╰─────────────────────────────── mkdir -p + cp + chmod can be one install: install -Dm755 tool $out/bin/tool
+───╯

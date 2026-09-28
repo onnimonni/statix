@@ -1,0 +1,18 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+{ systemd.services.x.preStart = ''
+  cp ${cfg.package}/bin/helper /run/x/helper
+  chgrp x /run/x/helper
+  chmod 750 /run/x/helper
+''; }
+---
+[shell_idiom] Warning: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │ ╭─▶   cp ${cfg.package}/bin/helper /run/x/helper
+   ┆ ┆   
+ 4 │ ├─▶   chmod 750 /run/x/helper
+   │ │                               
+   │ ╰─────────────────────────────── cp + chgrp + chmod can be one install: install -m 750 -g x ${cfg.package}/bin/helper /run/x/helper
+───╯

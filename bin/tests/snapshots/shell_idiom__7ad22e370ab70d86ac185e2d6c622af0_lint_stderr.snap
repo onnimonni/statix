@@ -1,0 +1,26 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  mkdir -p $out/share/doc
+  cp README.md NEWS $out/share/doc
+''; }
+---
+[shellcheck] Advice: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:2:12 ]
+   │
+ 2 │   mkdir -p $out/share/doc
+   │            ──┬─  
+   │              ╰─── SC2086: Double quote to prevent globbing and word splitting.
+ 3 │   cp README.md NEWS $out/share/doc
+   │                     ──┬─  
+   │                       ╰─── SC2086: Double quote to prevent globbing and word splitting.
+───╯
+[shell_idiom] Advice: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │ ╭─▶   mkdir -p $out/share/doc
+ 3 │ ├─▶   cp README.md NEWS $out/share/doc
+   │ │                                        
+   │ ╰──────────────────────────────────────── mkdir -p + cp can be one install
+───╯

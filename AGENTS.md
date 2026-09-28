@@ -75,3 +75,10 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 
 - JSON/YAML/TOML/INI files written as literal text (`writeText`, `toFile`, `writeTextDir`, `writeTextFile`, `*."x.json".text` options) should be generated: `pkgs.formats.<fmt>`, devenv `files."x".<fmt>`.
 - Not reported: text that's only generated (`${builtins.toJSON x}`, YAML `---` separators), one static line, meson `--cross-file`/`--native-file` machine files (own syntax). Shell scripts writing structured files are covered when the text is known before the script runs: `cat > f <<'EOF'` (or unquoted without `$`/backticks, and no shell expansions rendered by `${...}`), `echo`/`printf` with literal arguments, `>` only (`>>` appends to upstream files).
+
+## `shell_idiom` lint (W33)
+
+- Teach shorter idioms found with the brush-parser AST (no tree-sitter needed): consecutive simple commands (`;`, `&&`, lines, no redirections) in a list.
+- `[mkdir -p D] cp SRC DST [chmod MODE|chown U[:G]|chgrp G DST]` → `install [-D] [-m MODE] [-o U] [-g G]`. Exact (warning, `statix fix`) only with a numeric `chmod`, words in the same order, nothing but separators between; otherwise a hint (mode 755 caveat). `-D`/`-t` only where GNU coreutils run it (stdenv phases, `runCommand`, devenv, NixOS); elsewhere `mkdir -p D && install ...`.
+- Skip globs, `cp` options, symbolic modes, `$(...)`, `chmod` of the directory copied into.
+- Hints don't fail `statix check` and don't make a file unclean in the cache.

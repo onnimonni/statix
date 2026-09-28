@@ -142,9 +142,34 @@ pub struct Commands {
     /// Byte ranges of data (here-documents, multi-line words), which can't
     /// hold comments.
     pub data: Vec<(usize, usize)>,
+    /// Runs of simple commands executed one after another (`a; b`, `a && b`,
+    /// lines), without redirections, for suggesting shorter idioms.
+    pub sequences: Vec<Vec<Simple>>,
     /// Files written with text known before the script runs:
     /// `cat > x.json <<'EOF'`, `echo '{}' > x.json`.
     pub writes: Vec<Write>,
+}
+
+/// A simple command: its words' static text (`None` when dynamic) and byte
+/// ranges in the script.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Simple {
+    pub words: Vec<(Option<String>, usize, usize)>,
+}
+
+impl Simple {
+    #[must_use]
+    pub fn start(&self) -> usize {
+        self.words.first().map_or(0, |w| w.1)
+    }
+    #[must_use]
+    pub fn end(&self) -> usize {
+        self.words.last().map_or(0, |w| w.2)
+    }
+    #[must_use]
+    pub fn word(&self, i: usize) -> Option<&str> {
+        self.words.get(i)?.0.as_deref()
+    }
 }
 
 /// A file a command writes (`>`, not `>>`) with static text.
@@ -178,6 +203,7 @@ pub fn commands(text: &str, shell: &str) -> Commands {
         top: text.to_string(),
         raw: Vec::new(),
         via: Vec::new(),
+        last_simple: None,
         functions: HashSet::new(),
         aliases: HashSet::new(),
         out: Commands::default(),
@@ -243,6 +269,8 @@ struct Walker {
     raw: Vec<Use>,
     /// Commands running the command being walked.
     via: Vec<String>,
+    /// The last simple command walked, for [`Commands::sequences`].
+    last_simple: Option<Simple>,
     functions: HashSet<String>,
     aliases: HashSet<String>,
     out: Commands,
@@ -279,6 +307,14 @@ impl Source<'_> {
     }
 }
 
+/// End a sequence of commands.
+fn flush(run: &mut Vec<Simple>, out: &mut Commands) {
+    if run.len() > 1 {
+        out.sequences.push(std::mem::take(run));
+    }
+    run.clear();
+}
+
 impl Walker {
     /// Walk `text` (a script), which starts at byte `base` of the outer script.
     fn script(&mut self, text: &str, base: usize, depth: usize, clamp: Option<(usize, usize)>) {
@@ -297,19 +333,42 @@ impl Walker {
             depth,
             clamp,
         };
+        let mut run = Vec::new();
         for list in &program.complete_commands {
-            self.list(list, &src);
+            self.list_run(list, &src, &mut run);
         }
+        flush(&mut run, &mut self.out);
     }
 
     fn list(&mut self, list: &CompoundList, src: &Source) {
+        let mut run: Vec<Simple> = Vec::new();
+        self.list_run(list, src, &mut run);
+        flush(&mut run, &mut self.out);
+    }
+
+    /// Walk `list`, continuing the sequence `run` (the top level is one
+    /// list per line).
+    fn list_run(&mut self, list: &CompoundList, src: &Source, run: &mut Vec<Simple>) {
         for item in &list.0 {
             let and_or = &item.0;
-            self.pipeline(&and_or.first, src);
-            for next in &and_or.additional {
-                match next {
-                    ast::AndOr::And(p) | ast::AndOr::Or(p) => self.pipeline(p, src),
+            // `a && b` runs like `a; b` as long as they succeed
+            let pipelines = std::iter::once((&and_or.first, true)).chain(
+                and_or.additional.iter().map(|next| match next {
+                    ast::AndOr::And(p) => (p, true),
+                    ast::AndOr::Or(p) => (p, false),
+                }),
+            );
+            for (pipeline, sequential) in pipelines {
+                self.last_simple = None;
+                self.pipeline(pipeline, src);
+                let single = pipeline.seq.len() == 1 && !pipeline.bang;
+                match self.last_simple.take() {
+                    Some(simple) if single && sequential => run.push(simple),
+                    _ => flush(run, &mut self.out),
                 }
+            }
+            if matches!(item.1, ast::SeparatorOperator::Async) {
+                flush(run, &mut self.out);
             }
         }
     }
@@ -330,6 +389,16 @@ impl Walker {
 
     fn command(&mut self, command: &Command, src: &Source) {
         self.span(command, src);
+        if !matches!(command, Command::Simple(_)) {
+            // compound commands aren't part of a sequence
+            self.command_inner(command, src);
+            self.last_simple = None;
+            return;
+        }
+        self.command_inner(command, src);
+    }
+
+    fn command_inner(&mut self, command: &Command, src: &Source) {
         match command {
             Command::Simple(simple) => self.simple(simple, src),
             Command::Compound(compound, redirects) => {
@@ -611,6 +680,18 @@ impl Walker {
             self.static_write(simple, &args, src);
         }
         self.invocation(&args, Lookup::Any, src);
+        let redirected = simple
+            .prefix
+            .iter()
+            .flat_map(|p| &p.0)
+            .chain(simple.suffix.iter().flat_map(|s| &s.0))
+            .any(|i| !matches!(i, CommandPrefixOrSuffixItem::Word(_)));
+        self.last_simple = (src.clamp.is_none() && src.depth == 0 && !redirected).then(|| Simple {
+            words: args
+                .iter()
+                .map(|a| (a.text.clone(), a.start, a.end))
+                .collect(),
+        });
     }
 
     fn prefix_or_suffix(&mut self, item: &CommandPrefixOrSuffixItem, src: &Source) -> Option<Arg> {

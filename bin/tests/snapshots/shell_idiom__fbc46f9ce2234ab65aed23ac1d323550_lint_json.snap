@@ -1,9 +1,10 @@
 ---
-source: bin/tests/shellcheck.rs
+source: bin/tests/shell_idiom.rs
 ---
 stdenv.mkDerivation { installPhase = ''
   mkdir -p $out/bin
-  cp $src/tool $out/bin/
+  cp tool $out/bin/tool
+  chmod 755 $out/bin/tool
 ''; }
 ---
 {
@@ -34,11 +35,11 @@ stdenv.mkDerivation { installPhase = ''
                 "column": 38
               },
               "to": {
-                "line": 4,
+                "line": 5,
                 "column": 3
               }
             },
-            "fix": "''\n  mkdir -p \"$out\"/bin\n  cp \"$src\"/tool \"$out\"/bin/\n''"
+            "fix": "''\n  mkdir -p \"$out\"/bin\n  cp tool \"$out\"/bin/tool\n  chmod 755 \"$out\"/bin/tool\n''"
           },
           "fixable": true
         },
@@ -46,11 +47,11 @@ stdenv.mkDerivation { installPhase = ''
           "at": {
             "from": {
               "line": 3,
-              "column": 6
+              "column": 11
             },
             "to": {
               "line": 3,
-              "column": 10
+              "column": 15
             }
           },
           "message": "SC2086: Double quote to prevent globbing and word splitting.",
@@ -60,12 +61,12 @@ stdenv.mkDerivation { installPhase = ''
         {
           "at": {
             "from": {
-              "line": 3,
-              "column": 16
+              "line": 4,
+              "column": 13
             },
             "to": {
-              "line": 3,
-              "column": 20
+              "line": 4,
+              "column": 17
             }
           },
           "message": "SC2086: Double quote to prevent globbing and word splitting.",
@@ -78,7 +79,7 @@ stdenv.mkDerivation { installPhase = ''
       "name": "shell_idiom",
       "note": "Shell commands with a shorter idiom",
       "code": 33,
-      "severity": "Hint",
+      "severity": "Warn",
       "diagnostics": [
         {
           "at": {
@@ -87,14 +88,25 @@ stdenv.mkDerivation { installPhase = ''
               "column": 3
             },
             "to": {
-              "line": 3,
-              "column": 25
+              "line": 4,
+              "column": 26
             }
           },
-          "message": "`mkdir -p` + `cp` can be one `install`",
-          "suggestion": null,
-          "fixable": false,
-          "help": "Use `install -D $src/tool $out/bin/tool`. It sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files."
+          "message": "`mkdir -p` + `cp` + `chmod` can be one `install`: `install -Dm755 tool $out/bin/tool`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 38
+              },
+              "to": {
+                "line": 5,
+                "column": 3
+              }
+            },
+            "fix": "''\n  install -Dm755 tool $out/bin/tool\n''"
+          },
+          "fixable": true
         }
       ]
     }

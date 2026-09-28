@@ -1,0 +1,13 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  mkdir -p $out/bin
+  cp tool $out/bin/tool
+  chmod 755 $out/bin/tool
+''; }
+---
+<temp_file_path>>2:12:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>3:11:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>4:13:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>2:3:W:33:[shell_idiom] `mkdir -p` + `cp` + `chmod` can be one `install`: `install -Dm755 tool $out/bin/tool`

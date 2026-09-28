@@ -117,12 +117,15 @@ impl Rule for UndeclaredCommand {
         };
         // other scripts (writeShellScript, stdenv phases): declarations are
         // unknown, but paths and interpolated programs are still checked
-        let declared = declared::declared(&s, lang).unwrap_or_else(|| Declared {
+        let mut declared = declared::declared(&s, lang).unwrap_or_else(|| Declared {
             incomplete: true,
             platforms: declared::file_platforms(s.syntax()),
             ..Declared::default()
         });
-        let findings = check(&s, &script, shell, &declared);
+        // buildFHSEnv { runScript = ...; }: runs in the FHS sandbox
+        let fhs = declared::in_fhs_env(s.syntax());
+        declared.incomplete |= fhs;
+        let findings = check(&s, &script, shell, &declared, fhs);
         if findings.is_empty() {
             return None;
         }
@@ -302,7 +305,13 @@ fn directives_at(directives: &[Scoped], at: usize) -> (Cond, Vec<String>, bool) 
 }
 
 #[allow(clippy::too_many_lines)]
-fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec<Finding> {
+fn check(
+    s: &ast::Str,
+    script: &Script,
+    shell: &str,
+    declared: &Declared,
+    fhs: bool,
+) -> Vec<Finding> {
     let programs = programs::programs();
     let settings = programs::settings();
     let available = |system: &str, attr: &str| programs.available(system, attr);
@@ -366,8 +375,8 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
         let finding = if name.contains(PLACEHOLDER) {
             check_interpolated(s, script, u, programs, &effective, at)
         } else if name.starts_with('/') {
-            // `chroot DIR /busybox`: a path inside DIR
-            if u.via.iter().any(|r| r == "chroot") {
+            // `chroot DIR /busybox`: a path inside DIR; FHS sandbox paths
+            if fhs || u.via.iter().any(|r| r == "chroot") {
                 None
             } else {
                 check_absolute(name, at)

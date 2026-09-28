@@ -894,6 +894,24 @@ fn is_systemd_script(path: &[&str]) -> bool {
             || (n >= 5 && path[n - 4] == "user" && path[n - 5] == "systemd"))
 }
 
+/// Whether `node` is (in) the `runScript` or `profile` of a `buildFHSEnv`
+/// call: it runs inside the FHS sandbox, where `/usr`, `/opt`... are the
+/// sandbox's and commands come from `targetPkgs`/`multiPkgs`.
+#[must_use]
+pub fn in_fhs_env(node: &SyntaxNode) -> bool {
+    node.ancestors().filter_map(AttrpathValue::cast).any(|apv| {
+        matches!(last_key(&apv).as_deref(), Some("runScript" | "profile"))
+            && apv
+                .syntax()
+                .parent()
+                .and_then(|set| set.parent())
+                .and_then(ast::Apply::cast)
+                .and_then(|a| a.lambda())
+                .and_then(|f| fn_name(&f))
+                .is_some_and(|f| f.starts_with("buildFHSEnv") || f.starts_with("buildFHSUserEnv"))
+    })
+}
+
 /// Top-level options only NixOS has (devenv has `services`, `env`...).
 const NIXOS_OPTIONS: &[&str] = &[
     "systemd",

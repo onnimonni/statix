@@ -338,3 +338,26 @@ pkgs.stdenv.mkDerivation {
         "9:13:W:31:[undeclared_command] `sed -i` isn't portable: macOS sed needs `-i ''`, which GNU sed rejects"
     );
 }
+
+#[test]
+fn fhs_env_run_script() {
+    let out = check(
+        r#"{ pkgs, ... }:
+pkgs.buildFHSEnv {
+  name = "x";
+  targetPkgs = pkgs: [ pkgs.hello ];
+  runScript = pkgs.writeShellScript "run" ''
+    hello
+    exec /usr/lib/x/x "$@"
+  '';
+  passthru.outside = pkgs.writeShellScript "outside" ''
+    /usr/lib/x/x
+  '';
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "10:5:W:31:[undeclared_command] `/usr/lib/x/x` depends on the host system"
+    );
+}

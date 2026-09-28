@@ -261,8 +261,8 @@ functions, aliases and commands that run other commands like `sudo`,
   `scripts.<name>.packages`, enabled `languages`/`services`/modules and
   other `scripts` (a devenv script's name is a command in the others);
   `writeShellApplication` `runtimeInputs`; NixOS systemd `path` and its
-  default path. `rm`, `mkdir`, `cat`, `cp`, `mv`, `grep`, `ln`, `chown` and `touch` are
-  always available. `sed -i` with the host's sed is reported when macOS is
+  default path. `rm`, `mkdir`, `cat`, `cp`, `mv`, `grep`, `ln`, `chown`, `touch`, `which`,
+  `locale`, `dirname` and `sudo` are always available. `sed -i` with the host's sed is reported when macOS is
   checked (BSD sed needs `-i ''`, which GNU sed rejects; `-i.bak` works on
   both). When declarations can't be
   known (`imports`, computed lists) nothing is reported.

@@ -142,7 +142,8 @@ fn unknown_directive(unknown: &[String]) -> String {
 
 /// Commands every host has, never reported.
 const ALWAYS_AVAILABLE: &[&str] = &[
-    "rm", "mkdir", "cat", "cp", "mv", "grep", "ln", "chown", "touch", "which", "locale",
+    "rm", "mkdir", "cat", "cp", "mv", "grep", "ln", "chown", "touch", "which", "locale", "dirname",
+    "sudo",
 ];
 
 /// `sed -i` without an attached suffix: GNU sed takes `-i`, macOS (BSD) sed

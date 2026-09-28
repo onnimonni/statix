@@ -185,9 +185,132 @@ const DEVENV_FUNCTIONS: &[&str] = &["wait_for_port", "wait_for_processes"];
 /// `pkgs.jq` / `jq` / `lib.getBin pkgs.jq` / `(python3.withPackages f)` ->
 /// attribute path; `None` when it isn't a package reference we understand.
 pub fn package_attr(expr: &Expr) -> Option<String> {
+    package_attr_at(expr, 0)
+}
+
+/// What an identifier refers to.
+enum Binding {
+    /// `let x = <expr>;` (or `rec { x = <expr>; }`)
+    Value(Expr),
+    /// A package: `with pkgs;`, a callPackage argument (`{ jq, ... }:`), or
+    /// free in the file.
+    Package,
+    /// A function argument or anything else we can't follow.
+    Unknown,
+}
+
+/// Resolve identifier `name` at `node` with Nix scoping: lexical bindings
+/// (`let`, `rec`, function arguments) win over `with`.
+fn resolve(node: &SyntaxNode, name: &str) -> Binding {
+    let mut with_pkgs = false;
+    let mut with_other = false;
+    let mut child = node.clone();
+    for scope in node.ancestors().skip(1) {
+        let bindings = match scope.kind() {
+            SyntaxKind::NODE_LET_IN => Some(scope.clone()),
+            SyntaxKind::NODE_ATTR_SET
+                if ast::AttrSet::cast(scope.clone()).is_some_and(|a| a.rec_token().is_some()) =>
+            {
+                Some(scope.clone())
+            }
+            _ => None,
+        };
+        if let Some(set) = bindings {
+            for entry in set.children() {
+                if let Some(apv) = AttrpathValue::cast(entry.clone()) {
+                    let keys: Vec<_> = apv.attrpath().into_iter().flat_map(|p| p.attrs()).collect();
+                    if let [key] = keys.as_slice()
+                        && utils::attr_name(key).as_deref() == Some(name)
+                    {
+                        return apv.value().map_or(Binding::Unknown, Binding::Value);
+                    }
+                } else if let Some(inherit) = ast::Inherit::cast(entry) {
+                    let inherits_name = inherit
+                        .attrs()
+                        .any(|a| utils::attr_name(&a).as_deref() == Some(name));
+                    if inherits_name {
+                        return match inherit.from() {
+                            // inherit (pkgs) jq;
+                            Some(from)
+                                if from.expr().is_some_and(|e| e.syntax().text() == "pkgs") =>
+                            {
+                                Binding::Package
+                            }
+                            // inherit x; refers to the outer x
+                            None => resolve(&set, name),
+                            Some(_) => Binding::Unknown,
+                        };
+                    }
+                }
+            }
+        }
+        if let Some(with) = ast::With::cast(scope.clone())
+            && with.body().is_some_and(|b| b.syntax() == &child)
+        {
+            if with
+                .namespace()
+                .is_some_and(|n| n.syntax().text() == "pkgs")
+            {
+                with_pkgs = true;
+            } else {
+                with_other = true;
+            }
+        }
+        if let Some(lambda) = ast::Lambda::cast(scope.clone()) {
+            let outermost = !scope
+                .ancestors()
+                .skip(1)
+                .any(|a| a.kind() == SyntaxKind::NODE_LAMBDA);
+            match lambda.param() {
+                Some(ast::Param::IdentParam(p)) if p.syntax().text() == name => {
+                    return Binding::Unknown;
+                }
+                Some(ast::Param::Pattern(pat)) => {
+                    let bound = pat
+                        .pat_entries()
+                        .any(|e| e.ident().is_some_and(|i| i.syntax().text() == name))
+                        || pat
+                            .pat_bind()
+                            .and_then(|b| b.ident())
+                            .is_some_and(|i| i.syntax().text() == name);
+                    if bound {
+                        // `{ jq, ... }:` of a callPackage file
+                        return if outermost {
+                            Binding::Package
+                        } else {
+                            Binding::Unknown
+                        };
+                    }
+                }
+                _ => {}
+            }
+        }
+        child = scope;
+    }
+    if with_pkgs {
+        Binding::Package
+    } else if with_other {
+        Binding::Unknown
+    } else {
+        Binding::Package
+    }
+}
+
+fn package_attr_at(expr: &Expr, depth: usize) -> Option<String> {
+    if depth > 8 {
+        return None;
+    }
     match expr {
-        Expr::Paren(p) => package_attr(&p.expr()?),
-        Expr::Ident(i) => Some(i.syntax().text().to_string()),
+        Expr::Paren(p) => package_attr_at(&p.expr()?, depth + 1),
+        Expr::Ident(i) => {
+            let name = i.syntax().text().to_string();
+            match resolve(i.syntax(), &name) {
+                // pkg = cfg.package;
+                Binding::Value(v) => package_attr_at(&v, depth + 1),
+                Binding::Package => Some(name),
+                Binding::Unknown => None,
+            }
+        }
         Expr::Select(s) => {
             if s.default_expr().is_some() {
                 return None;
@@ -198,23 +321,32 @@ pub fn package_attr(expr: &Expr) -> Option<String> {
                 .attrs()
                 .map(|a| utils::attr_name(&a))
                 .collect::<Option<_>>()?;
-            match &base {
-                Expr::Ident(i) if i.syntax().text() == "pkgs" => Some(attrs.join(".")),
-                Expr::Ident(i) if i.syntax().text() == "config" || i.syntax().text() == "self" => {
-                    None
-                }
-                Expr::Ident(i) => Some(format!("{}.{}", i.syntax().text(), attrs.join("."))),
-                _ => None,
+            let Expr::Ident(i) = &base else { return None };
+            let name = i.syntax().text().to_string();
+            match name.as_str() {
+                "pkgs" => Some(attrs.join(".")),
+                "config" | "self" | "lib" | "cfg" => None,
+                // python3Packages.foo, pp.foo with pp = pkgs.python3Packages
+                _ => match resolve(i.syntax(), &name) {
+                    Binding::Package => Some(format!("{name}.{}", attrs.join("."))),
+                    Binding::Value(v) if v.syntax().text() == "pkgs" => Some(attrs.join(".")),
+                    Binding::Value(v) => {
+                        package_attr_at(&v, depth + 1).map(|b| format!("{b}.{}", attrs.join(".")))
+                    }
+                    Binding::Unknown => None,
+                },
             }
         }
         Expr::Apply(a) => {
             let f = a.lambda()?;
             let name = fn_name(&f)?;
             match name.as_str() {
-                "getBin" | "getOutput" | "getExe" | "getDev" => package_attr(&a.argument()?),
+                "getBin" | "getOutput" | "getExe" | "getDev" => {
+                    package_attr_at(&a.argument()?, depth + 1)
+                }
                 // pkgs.python3.withPackages (ps: ...) -> python3
                 "withPackages" | "override" | "overrideAttrs" => match f {
-                    Expr::Select(s) => package_attr(&s.expr()?),
+                    Expr::Select(s) => package_attr_at(&s.expr()?, depth + 1),
                     _ => None,
                 },
                 _ => None,
@@ -636,10 +768,26 @@ fn systemd(service: &[String], root: &SyntaxNode) -> Declared {
         ..Declared::default()
     };
     let mut default_path = true;
+    // whether this file defines the service, or only adds scripts to one
+    // another module defines (`systemd.services.postgresql.postStart`)
+    let mut defines = false;
     for (path, apv) in bindings(root).iter() {
         // other modules may add to the service's `path`
         if path.first().is_some_and(|p| p == "imports") {
             out.incomplete = true;
+        }
+        let in_service = path.len() > service.len()
+            && path
+                .iter()
+                .zip(service)
+                .all(|(a, b)| a == b || a == "*" || b == "*");
+        if in_service
+            && !matches!(
+                path[service.len()].as_str(),
+                "script" | "preStart" | "postStart" | "preStop" | "postStop" | "reload"
+            )
+        {
+            defines = true;
         }
         let matches_service = path.len() == service.len() + 1
             && path
@@ -658,6 +806,9 @@ fn systemd(service: &[String], root: &SyntaxNode) -> Declared {
             }
             _ => {}
         }
+    }
+    if !defines {
+        out.incomplete = true;
     }
     if default_path {
         out.packages.extend(SYSTEMD_PATH.iter().map(|attr| Package {
@@ -921,6 +1072,47 @@ mod tests {
         let d = declared(&s, Lang::Shell("bash")).unwrap();
         assert!(attrs(&d).contains(&"curl") && attrs(&d).contains(&"coreutils"));
         assert_eq!(d.platforms, Some(Cond::Platform("linux".into())));
+    }
+
+    #[test]
+    fn let_scoping() {
+        let d = |src: &str| declared(&first_string(src), Lang::Shell("bash")).unwrap();
+        // pkg = cfg.package: unknown, not pkgs.pkg
+        let fdb = d(
+            "{ config, pkgs, ... }: let cfg = config.services.x; pkg = cfg.package; in { systemd.services.x = { path = [ pkg pkgs.coreutils ]; script = ''RUN''; }; }",
+        );
+        assert!(fdb.incomplete);
+        assert!(!attrs(&fdb).contains(&"pkg"));
+        // let jq = pkgs.jq; with pkgs; callPackage arguments
+        let known = d(
+            "{ pkgs, curl, ... }: let j = pkgs.jq; in { systemd.services.x = { path = [ j curl ] ++ (with pkgs; [ ripgrep ]); script = ''RUN''; }; }",
+        );
+        assert!(!known.incomplete);
+        assert!(
+            ["jq", "curl", "ripgrep"]
+                .iter()
+                .all(|a| attrs(&known).contains(a))
+        );
+        // lexical bindings win over `with pkgs;`
+        let shadowed = d(
+            "{ pkgs, ... }: let git = pkgs.gitMinimal; in { systemd.services.x = { path = with pkgs; [ git ]; script = ''RUN''; }; }",
+        );
+        assert!(attrs(&shadowed).contains(&"gitMinimal"));
+        // a function argument isn't a package
+        let arg = d(
+            "{ pkgs, ... }: { systemd.services.x = { path = map (p: p) [ ]; script = ''RUN''; }; }",
+        );
+        assert!(arg.incomplete);
+    }
+
+    #[test]
+    fn scripts_added_to_other_modules_services() {
+        let d = declared(
+            &first_string("{ systemd.services.postgresql-setup.postStart = ''RUN''; }"),
+            Lang::Shell("bash"),
+        )
+        .unwrap();
+        assert!(d.incomplete);
     }
 
     #[test]

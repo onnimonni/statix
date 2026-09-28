@@ -46,6 +46,8 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 - `[ -f ./x ]`/`[[ -x ./x ]]` guards make paths optional. After `cd`/`pushd`, relative paths aren't checked. `source`/`.` or a bare `${snippet}` command means functions are unknown: don't report undeclared commands.
 - Only whole scripts are checked for undeclared commands: pieces of `+` concatenations, `concatStrings*` and multi-item lists are fragments (command positions and functions unknown). Strings in `mkIf` conditions or other non-value positions aren't scripts.
 - Files setting NixOS-only options (`systemd`, `boot`, `security`, `networking`, `fileSystems`, `hardware`, `virtualisation`, also under `options.`) are NixOS modules: their scripts run on Linux only.
+- Identifiers in declarations follow Nix scoping: `let`/`rec` bindings resolve to their value (`pkg = cfg.package` is unknown, not `pkgs.pkg`); arguments of the file's outermost function are callPackage packages; other function arguments are unknown; lexical bindings win over `with pkgs;`.
+- A file that only sets script keys (`script`, `preStart`, `postStart`, ...) on a systemd service adds to a service another module defines: its `path` is unknown.
 - Otherwise a file's single `meta.platforms` applies to its scripts, except `updateScript` (runs on the maintainer's machine). NixOS tests (`nodes`, `testScript`) are Linux.
 - Scripts without declarations (writeShellScript, stdenv phases) still get the absolute-path and interpolated-program checks.
 - Check absolute and relative command paths too: absolute paths outside `/nix/store` are host dependencies (except `/bin/sh`, `/usr/bin/env`); relative paths in devenv scripts must exist relative to the project root.

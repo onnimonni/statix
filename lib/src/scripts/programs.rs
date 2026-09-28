@@ -5,10 +5,7 @@
 //! passes as `STATIX_PROGRAMS=system=path:system=path`. Without them a small
 //! built-in table is used.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::OnceLock,
-};
+use std::{collections::HashMap, sync::OnceLock};
 
 /// Systems nix-index-database publishes indexes for.
 pub const INDEXED_SYSTEMS: &[&str] = &["x86_64-linux", "aarch64-linux", "aarch64-darwin"];
@@ -233,10 +230,40 @@ pub const OS_PROVIDED: &[(&str, &[&str])] = &[
     ("linux", &["systemctl", "loginctl"]),
 ];
 
+/// program -> outputs having it
+type Outputs = HashMap<String, Vec<String>>;
+
 #[derive(Default)]
 struct Index {
-    programs: HashMap<String, HashSet<String>>,
+    /// attribute -> programs
+    programs: HashMap<String, Outputs>,
     providers: HashMap<String, Vec<String>>,
+}
+
+impl Index {
+    /// `jq` or `jq.bin` (an output of `jq`): the programs and the output.
+    fn entry<'a>(&self, attr: &'a str) -> Option<(&Outputs, Option<&'a str>)> {
+        if let Some(programs) = self.programs.get(attr) {
+            return Some((programs, None));
+        }
+        let (base, output) = attr.rsplit_once('.')?;
+        let programs = self.programs.get(base)?;
+        programs
+            .values()
+            .any(|outputs| outputs.iter().any(|o| o == output))
+            .then_some((programs, Some(output)))
+    }
+
+    /// Whether `attr` has `program`. Without an output (`pkgs.jq`) any output
+    /// counts: which ones are on PATH (`outputsToInstall`) isn't in the index.
+    fn has(&self, attr: &str, program: &str) -> Option<bool> {
+        let (programs, output) = self.entry(attr)?;
+        let outputs = programs.get(program);
+        Some(match output {
+            None => outputs.is_some(),
+            Some(o) => outputs.is_some_and(|outs| outs.iter().any(|x| x == o)),
+        })
+    }
 }
 
 #[derive(Default)]
@@ -273,15 +300,12 @@ fn load(spec: &str) -> Programs {
     Programs { indexes }
 }
 
-/// `attr<TAB>output<TAB>program` lines. The output is kept in the data but
-/// merged here: `pkgs.jq` in `packages`/`runtimeInputs` puts its
-/// `outputsToInstall` (or `lib.getBin`) on PATH, which isn't in the index;
-/// merging never reports a program missing that one of the outputs has.
+/// `attr<TAB>output<TAB>program` lines.
 fn parse_index(text: &str) -> Index {
     let mut index = Index::default();
     for line in text.lines() {
         let mut cols = line.split('\t');
-        let (Some(attr), Some(_output), Some(program)) = (cols.next(), cols.next(), cols.next())
+        let (Some(attr), Some(output), Some(program)) = (cols.next(), cols.next(), cols.next())
         else {
             continue;
         };
@@ -289,7 +313,9 @@ fn parse_index(text: &str) -> Index {
             .programs
             .entry(attr.to_string())
             .or_default()
-            .insert(program.to_string());
+            .entry(program.to_string())
+            .or_default()
+            .push(output.to_string());
         let providers = index.providers.entry(program.to_string()).or_default();
         if !providers.iter().any(|p| p == attr) {
             providers.push(attr.to_string());
@@ -318,7 +344,7 @@ impl Programs {
     /// Whether some index knows `attr`.
     #[must_use]
     pub fn knows(&self, attr: &str) -> bool {
-        self.indexes.values().any(|i| i.programs.contains_key(attr))
+        self.indexes.values().any(|i| i.entry(attr).is_some())
     }
 
     /// Whether `attr` provides `program` on `system`: `Some(true/false)` when
@@ -331,8 +357,8 @@ impl Programs {
             .find(|(a, _)| *a == attr_name(attr))
             .map(|(_, programs)| programs.contains(&program));
         match self.indexes.get(system) {
-            Some(index) => match index.programs.get(attr) {
-                Some(programs) => Some(programs.contains(program)),
+            Some(index) => match index.has(attr, program) {
+                Some(has) => Some(has),
                 // known on another system only: not available here
                 None if self.knows(attr) => Some(false),
                 None => fallback,
@@ -347,7 +373,7 @@ impl Programs {
     #[must_use]
     pub fn available(&self, system: &str, attr: &str) -> Option<bool> {
         let index = self.indexes.get(system)?;
-        if index.programs.contains_key(attr) {
+        if index.entry(attr).is_some() {
             Some(true)
         } else if self.knows(attr) {
             Some(false)
@@ -406,6 +432,16 @@ pub fn os_provides(system: &str, program: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outputs() {
+        let index = parse_index("jq\tbin\tjq\njq\tdev\tjq-config\n");
+        assert_eq!(index.has("jq", "jq"), Some(true));
+        assert_eq!(index.has("jq.bin", "jq"), Some(true));
+        assert_eq!(index.has("jq.dev", "jq"), Some(false));
+        assert_eq!(index.has("jq.doc", "jq"), None);
+        assert_eq!(index.has("custom", "jq"), None);
+    }
 
     #[test]
     fn fallback_without_index() {

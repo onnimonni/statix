@@ -116,15 +116,20 @@ fn relative_to(root: &Path, cwd: &Path, path: &Path) -> PathBuf {
 }
 
 /// What the saved results depend on besides file contents.
-/// `STATIX_PROGRAMS` with each index file's size and modification time, so
-/// an index updated in place invalidates the cache.
+/// `STATIX_PROGRAMS` with a hash of each index file outside the (immutable)
+/// Nix store, so an index updated in place invalidates the cache.
 fn programs_fingerprint() -> String {
     let spec = std::env::var("STATIX_PROGRAMS").unwrap_or_default();
     spec.split(':')
         .map(|part| {
             let file = part.split_once('=').map_or(part, |(_, f)| f);
-            let (size, mtime) = stat(Path::new(file)).unwrap_or_default();
-            format!("{part}#{size}#{mtime}")
+            if file.starts_with("/nix/store/") {
+                return part.to_string();
+            }
+            let hash = fs::read(file)
+                .map(|bytes| lib::content_hash(&bytes))
+                .unwrap_or_default();
+            format!("{part}#{hash}")
         })
         .collect::<Vec<_>>()
         .join(":")

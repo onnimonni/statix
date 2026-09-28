@@ -520,6 +520,40 @@ fn add_package_list(apv: &AttrpathValue, out: &mut Declared) {
 /// devenv: `packages`, `scripts.<n>.packages`, script names, stdenv, enabled
 /// languages and services.
 fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
+    type PerScript = std::rc::Rc<Vec<(String, AttrpathValue)>>;
+    // the same for every script in the file: keep the last file's
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(SyntaxNode, Declared, PerScript)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let root = root_of(script);
+    let (mut out, per_script) = LAST.with(|last| {
+        if let Some((node, d, p)) = &*last.borrow()
+            && *node == root
+        {
+            return (d.clone(), p.clone());
+        }
+        let (d, p) = devenv_file(&root);
+        let p: PerScript = std::rc::Rc::new(p);
+        *last.borrow_mut() = Some((root.clone(), d.clone(), p.clone()));
+        (d, p)
+    });
+    // lib.mkIf pkgs.stdenv.isDarwin { enterTest = ...; }
+    let cond = ancestor_cond(script);
+    if cond != Cond::True {
+        out.platforms = Some(cond);
+    }
+    for (n, apv) in per_script.iter() {
+        if Some(n.as_str()) == name {
+            add_package_list(apv, &mut out);
+        }
+    }
+    out
+}
+
+/// devenv declarations of the whole file, and `scripts.<name>.packages`.
+fn devenv_file(root: &SyntaxNode) -> (Declared, Vec<(String, AttrpathValue)>) {
+    let mut per_script = Vec::new();
     let mut out = Declared {
         place: "packages",
         devenv: true,
@@ -532,23 +566,19 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
             at: TextRange::default(),
         });
     }
-    // lib.mkIf pkgs.stdenv.isDarwin { enterTest = ...; }
-    let cond = ancestor_cond(script);
-    if cond != Cond::True {
-        out.platforms = Some(cond);
-    }
     out.commands.push("devenv".into());
     out.commands
         .extend(DEVENV_FUNCTIONS.iter().map(|f| (*f).to_string()));
-    let root = root_of(script);
-    out.incomplete |= inherits(&root, &["packages"]);
-    for (path, apv) in bindings(&root).iter() {
+    out.incomplete |= inherits(root, &["packages"]);
+    for (path, apv) in bindings(root).iter() {
         let p: Vec<&str> = path.iter().map(String::as_str).collect();
         match p.as_slice() {
             // languages.vala.package = pkgs.vala;
             ["packages"] | ["languages", _, "package"] => add_package_list(apv, &mut out),
-            ["scripts", n, "packages"] if Some(*n) == name => add_package_list(apv, &mut out),
-            ["scripts", n, ..] => {
+            ["scripts", n, rest @ ..] => {
+                if rest == ["packages"] {
+                    per_script.push(((*n).to_string(), apv.clone()));
+                }
                 if !out.commands.iter().any(|c| c == n) {
                     out.commands.push((*n).to_string());
                 }
@@ -592,7 +622,7 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
             _ => {}
         }
     }
-    out
+    (out, per_script)
 }
 
 /// systemd services: their `path` and the default path; Linux only.

@@ -17,7 +17,9 @@ pub fn lint_with(vfs_entry: &VfsEntry, lints: &LintMap) -> LintResult {
     let parsed = Root::parse(source);
     let reports = lib::with_current_file(Some(vfs_entry.file_path), || {
         // one checker process per file instead of one per script
-        lib::prefetch(&parsed.syntax());
+        if runs_checkers(lints) {
+            lib::prefetch(&parsed.syntax());
+        }
         lints_of(&parsed, lints)
     });
     LintResult { file_id, reports }
@@ -40,6 +42,15 @@ fn lints_of(parsed: &rnix::Parse<Root>, lints: &LintMap) -> Vec<Report> {
         .flatten()
         .chain(error_reports)
         .collect()
+}
+
+/// Whether a lint that runs shellcheck or ruff is enabled.
+#[must_use]
+pub fn runs_checkers(lints: &LintMap) -> bool {
+    lints
+        .values()
+        .flatten()
+        .any(|l| matches!(l.name(), "shellcheck" | "ruff" | "script_file"))
 }
 
 /// Check all shell scripts of `sources` (path, contents) up front, batched
@@ -95,7 +106,9 @@ pub mod main {
             cache.load_scripts();
         }
         let sources: Vec<_> = stale.iter().map(|e| (e.file_path, e.contents)).collect();
-        prefetch(&sources);
+        if super::runs_checkers(&lints) {
+            prefetch(&sources);
+        }
         let results: Vec<_> = stale
             .par_iter()
             .map(|entry| {

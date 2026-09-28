@@ -172,7 +172,15 @@ fn is_snippet(s: &ast::Str, script: &Script, u: &Use) -> bool {
         return true;
     };
     match &expr {
-        ast::Expr::Apply(_) => false,
+        // lib.getExe pkgs.jq; lib.optionalString c "f() { ...; }" is a snippet
+        ast::Expr::Apply(a) => {
+            let mut f = a.lambda();
+            while let Some(ast::Expr::Apply(inner)) = f {
+                f = inner.lambda();
+            }
+            !f.and_then(|f| scripts::context::fn_name(&f))
+                .is_some_and(|n| n == "getExe" || n == "getExe'")
+        }
         e => !e.syntax().text().to_string().starts_with("pkgs."),
     }
 }

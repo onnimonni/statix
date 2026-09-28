@@ -695,7 +695,13 @@ impl Walker {
         }
 
         self.record(first, lookup, src);
-        self.via.push(bare.to_string());
+        // `command sudo x`, `exec sudo x`: never a function, so no name that
+        // could be one
+        self.via.push(if lookup == Lookup::Any {
+            bare.to_string()
+        } else {
+            String::new()
+        });
         self.runs(program, rest, src);
         self.via.pop();
     }
@@ -1043,8 +1049,9 @@ fn skip_known<'a>(args: &'a [Arg], execer: &Execer) -> Option<&'a [Arg]> {
             i += 1 + positionals;
             break;
         }
-        let numeric = text.len() > 1 && text[1..].bytes().all(|b| b.is_ascii_digit());
-        if numeric && text.starts_with('-') && !text[1..].starts_with(execer.flags_short) {
+        let digits = text.strip_prefix('-').unwrap_or_default();
+        let numeric = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+        if numeric && !digits.starts_with(execer.flags_short) {
             // `nice -5 cmd`
         } else if let Some(long) = text.strip_prefix("--") {
             let name = long.split('=').next().unwrap_or(long);
@@ -1158,6 +1165,11 @@ mod tests {
             ("$'j\\x71' .", &[]),
             ("for ((i=0; i<1; i++)); do jq .; done", &["jq"]),
             ("exec -a", &[]),
+            ("env \u{e9}", &["env", "\u{e9}"]),
+            (
+                "sudo() { :; }; command sudo x; exec sudo y",
+                &["sudo", "x", "sudo", "y"],
+            ),
             (
                 "cat <(sort a) | while read -r l; do tr a b <<< \"$l\"; done",
                 &["cat", "sort", "tr"],

@@ -58,6 +58,56 @@ stdenv.mkDerivation { installPhase = ''
           "fixable": true
         }
       ]
+    },
+    {
+      "name": "shell_idiom",
+      "note": "Shell commands with a shorter idiom",
+      "code": 33,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 3
+            }
+          },
+          "message": "The phase doesn't run `runHook preInstall`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 38
+              },
+              "to": {
+                "line": 4,
+                "column": 3
+              }
+            },
+            "fix": "''\n  runHook preInstall\n  cp -r dist $out\n  chmod 755 $out\n  runHook postInstall\n''"
+          },
+          "fixable": true
+        },
+        {
+          "at": {
+            "from": {
+              "line": 3,
+              "column": 17
+            },
+            "to": {
+              "line": 3,
+              "column": 17
+            }
+          },
+          "message": "The phase doesn't run `runHook postInstall`",
+          "suggestion": null,
+          "fixable": true
+        }
+      ]
     }
   ]
 }

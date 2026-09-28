@@ -330,7 +330,26 @@ cp tool $out/bin/tool
 chmod 755 $out/bin/tool
 ```
 
-With an explicit numeric mode it's a warning that `statix fix` rewrites.
+Other idioms, exact ones fixed by `statix fix`, the rest hints:
+
+- build phases: missing `runHook preInstall`/`postInstall` (exact),
+  `substituteInPlace --replace` → `--replace-fail`, `sed -i 's/a/b/'` →
+  `substituteInPlace`, `installBin`, `installManPage`,
+  `installShellCompletion`, `mkdir -p` before `makeWrapper`/`install -D`
+  (exact), `set -euo pipefail` (already set), `HOME=$(mktemp -d)` →
+  `$TMPDIR`, `--prefix PATH : ${x}/bin` → `lib.makeBinPath`
+- `mkdir -p a; mkdir -p b` → `mkdir -p a b`, `rm -f x; ln -s y x` →
+  `ln -sfn y x`, `$(cat f)` → `$(<f)` (bash), `egrep`/`fgrep` → `grep -E`/`-F`
+  (exact)
+- `cat f | cmd` → `cmd < f`, `echo x | tee f >/dev/null` → `echo x > f`
+  (exact), `grep >/dev/null` → `grep -q`, `grep | wc -l` → `grep -c`,
+  `grep | head -1` → `grep -m1`, `sort | uniq` → `sort -u`,
+  `find -exec rm {} \;` → `-delete`, `[ -e f ] && rm f` → `rm -f f`,
+  `[ ! -d d ] && mkdir d` → `mkdir -p d`, `for f in $(ls d)` → `d/*`,
+  `ls | grep`, `echo $(cmd)`, `$(which x)` → `command -v`, `cd d; ...; cd ..`
+  and `pushd`/`popd` → subshell
+
+With an explicit numeric mode the `install` idiom is a warning that `statix fix` rewrites.
 Without one it's a hint (shown, doesn't fail `statix check`): `install`
 sets mode 755 where `cp` keeps the source's, so add `-m 644` for data
 files. `-D` and `-t` are only suggested where GNU coreutils run the script

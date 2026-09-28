@@ -51,7 +51,30 @@ struct ShellIdiom;
 /// Where the script runs: GNU coreutils (stdenv phases and `runCommand`,
 /// devenv, NixOS modules) and whether setup.sh functions exist (stdenv
 /// phases, `runCommand`).
-fn context(s: &ast::Str, kind: Kind) -> idioms::Context {
+/// Standard stdenv phases with `runHook pre<Name>` / `post<Name>`.
+const PHASES: &[(&str, &str)] = &[
+    ("unpackPhase", "Unpack"),
+    ("patchPhase", "Patch"),
+    ("configurePhase", "Configure"),
+    ("buildPhase", "Build"),
+    ("checkPhase", "Check"),
+    ("installPhase", "Install"),
+    ("installCheckPhase", "InstallCheck"),
+    ("distPhase", "Dist"),
+];
+
+/// The stdenv phase `s` is the body of: `installPhase = ''...''`.
+fn phase_of(s: &ast::Str) -> Option<&'static str> {
+    let apv = AttrpathValue::cast(s.syntax().parent()?)?;
+    let key = apv.attrpath()?.attrs().last()?;
+    let name = utils::attr_name(&key)?;
+    PHASES
+        .iter()
+        .find(|(p, _)| *p == name)
+        .map(|(_, hook)| *hook)
+}
+
+fn context(s: &ast::Str, kind: Kind, shell: &str) -> idioms::Context {
     let node = s.syntax();
     let run_command = node
         .ancestors()
@@ -78,6 +101,8 @@ fn context(s: &ast::Str, kind: Kind) -> idioms::Context {
     idioms::Context {
         gnu: build || devenv || linux,
         build,
+        bash: shell == "bash",
+        phase: phase_of(s).is_some(),
     }
 }
 
@@ -101,6 +126,47 @@ fn change(script: &Script, idiom: &idioms::Idiom) -> Option<Change> {
     })
 }
 
+/// `installPhase = ''...''` without `runHook preInstall` / `postInstall`:
+/// hooks from `preInstall = ...` and setup hooks don't run.
+fn missing_run_hooks(s: &ast::Str, text: &str) -> Vec<idioms::Idiom> {
+    let Some(hook) = phase_of(s) else {
+        return Vec::new();
+    };
+    let body = text.trim();
+    // `installPhase = "true";`, `":"`: nothing to wrap
+    if body.is_empty() || matches!(body, "true" | ":") {
+        return Vec::new();
+    }
+    let (pre, post) = (format!("runHook pre{hook}"), format!("runHook post{hook}"));
+    let start = text.len() - text.trim_start().len();
+    let end = text.trim_end().len();
+    let mut out = Vec::new();
+    let note = Some(
+        "Overriding a phase skips its hooks unless it runs them: `preInstall`/`postInstall` from the derivation and from setup hooks.",
+    );
+    if !text.contains(&pre) {
+        out.push(idioms::Idiom {
+            start,
+            end: start,
+            replacement: vec![idioms::Piece::Text(format!("{pre}\n"))],
+            message: format!("The phase doesn't run `{pre}`"),
+            note,
+            exact: true,
+        });
+    }
+    if !text.contains(&post) {
+        out.push(idioms::Idiom {
+            start: end,
+            end,
+            replacement: vec![idioms::Piece::Text(format!("\n{post}"))],
+            message: format!("The phase doesn't run `{post}`"),
+            note,
+            exact: true,
+        });
+    }
+    out
+}
+
 impl Rule for ShellIdiom {
     fn validate(&self, node: &SyntaxElement) -> Option<Report> {
         let NodeOrToken::Node(node) = node else {
@@ -111,8 +177,11 @@ impl Rule for ShellIdiom {
         let Lang::Shell(shell) = lang else {
             return None;
         };
-        let ctx = context(&s, kind);
-        let found = idioms::idioms_in(&script.text, &commands::commands(&script.text, shell), ctx);
+        let ctx = context(&s, kind, shell);
+        let mut found =
+            idioms::idioms_in(&script.text, &commands::commands(&script.text, shell), ctx);
+        found.extend(missing_run_hooks(&s, &script.text));
+        found.sort_by_key(|i| i.start);
         if found.is_empty() {
             return None;
         }
@@ -140,6 +209,12 @@ impl Rule for ShellIdiom {
             let Some(shown) = idiom.render(nix_word) else {
                 continue;
             };
+            // one line in messages (`runHook preInstall\n`, multi-line commands)
+            let shown = shown.trim();
+            let shown = match shown.split_once('\n') {
+                Some((first, _)) => format!("{} …", first.trim_end_matches([' ', '\\'])),
+                None => shown.to_string(),
+            };
             let message = idiom.message.clone();
             let help = match (shown.is_empty(), idiom.note) {
                 (true, Some(caveat)) => caveat.to_string(),
@@ -151,7 +226,11 @@ impl Rule for ShellIdiom {
                     suggested = true;
                     report.suggest(
                         at,
-                        format!("{message}: `{shown}`"),
+                        if message.contains(&shown) {
+                            message.clone()
+                        } else {
+                            format!("{message}: `{shown}`")
+                        },
                         Suggestion::with_replacement(
                             s.syntax().text_range(),
                             fixed.syntax().clone(),

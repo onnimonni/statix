@@ -63,7 +63,7 @@ stdenv.mkDerivation { installPhase = ''
       "name": "shell_idiom",
       "note": "Shell commands with a shorter idiom",
       "code": 33,
-      "severity": "Hint",
+      "severity": "Warn",
       "diagnostics": [
         {
           "at": {
@@ -80,6 +80,48 @@ stdenv.mkDerivation { installPhase = ''
           "suggestion": null,
           "fixable": false,
           "help": "Use `install -D -t $out/share/doc README.md NEWS`. `install` sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files."
+        },
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 3
+            }
+          },
+          "message": "The phase doesn't run `runHook preInstall`",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 38
+              },
+              "to": {
+                "line": 4,
+                "column": 3
+              }
+            },
+            "fix": "''\n  runHook preInstall\n  mkdir -p $out/share/doc\n  cp README.md NEWS $out/share/doc\n  runHook postInstall\n''"
+          },
+          "fixable": true
+        },
+        {
+          "at": {
+            "from": {
+              "line": 3,
+              "column": 35
+            },
+            "to": {
+              "line": 3,
+              "column": 35
+            }
+          },
+          "message": "The phase doesn't run `runHook postInstall`",
+          "suggestion": null,
+          "fixable": true
         }
       ]
     }

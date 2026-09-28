@@ -82,3 +82,4 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 - `[mkdir -p D] cp SRC DST [chmod MODE|chown U[:G]|chgrp G DST]` → `install [-D] [-m MODE] [-o U] [-g G]`. Exact (warning, `statix fix`) only with a numeric `chmod`, words in the same order, nothing but separators between; otherwise a hint (mode 755 caveat). `-D`/`-t` only where GNU coreutils run it (stdenv phases, `runCommand`, devenv, NixOS); elsewhere `mkdir -p D && install ...`.
 - Skip globs, `cp` options, symbolic modes, `$(...)`, `chmod` of the directory copied into.
 - Hints don't fail `statix check` and don't make a file unclean in the cache.
+- Idea lists from Codex and Fable (2026-09-29) drive further idioms; exact only when behaviour is identical and words keep their order (placeholders are put back in order). Nix build-helper idioms (`substituteInPlace`, `installShellFiles`, `runHook`) only in stdenv phases/`runCommand`.

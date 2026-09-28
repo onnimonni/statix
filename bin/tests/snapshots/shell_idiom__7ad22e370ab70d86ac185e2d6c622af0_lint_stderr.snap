@@ -16,11 +16,20 @@ stdenv.mkDerivation { installPhase = ''
    │                     ──┬─  
    │                       ╰─── SC2086: Double quote to prevent globbing and word splitting.
 ───╯
-[shell_idiom] Advice: Shell commands with a shorter idiom
+[shell_idiom] Warning: Shell commands with a shorter idiom
    ╭─[ <temp_file_path>:2:3 ]
    │
  2 │ ╭─▶   mkdir -p $out/share/doc
  3 │ ├─▶   cp README.md NEWS $out/share/doc
    │ │                                        
    │ ╰──────────────────────────────────────── mkdir -p + cp can be one install
+   │
+   ├─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   mkdir -p $out/share/doc
+   │   │ 
+   │   ╰─ The phase doesn't run runHook preInstall
+ 3 │   cp README.md NEWS $out/share/doc
+   │                                   │ 
+   │                                   ╰─ The phase doesn't run runHook postInstall
 ───╯

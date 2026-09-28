@@ -53,12 +53,17 @@ impl Idiom {
 
 /// Where a script runs.
 #[derive(Debug, Clone, Copy, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct Context {
     /// GNU coreutils: `install -D`, `-t`.
     pub gnu: bool,
     /// A stdenv build phase or hook: setup.sh functions (`substituteInPlace`,
     /// `installManPage`...) exist.
     pub build: bool,
+    /// bash (not POSIX sh): `$(<file)`.
+    pub bash: bool,
+    /// A stdenv phase body (`installPhase`...): runs with `set -eu -o pipefail`.
+    pub phase: bool,
 }
 
 /// Idioms in `commands` of the script `text` running in `ctx`.
@@ -73,6 +78,7 @@ pub fn idioms_in(text: &str, commands: &Commands, ctx: Context) -> Vec<Idiom> {
     }
     for c in &commands.simples {
         out.extend(simple_idioms(text, c, ctx));
+        out.extend(more_simple_idioms(text, c, ctx));
     }
     for u in &commands.uses {
         out.extend(renamed_command(text, u));
@@ -83,6 +89,8 @@ pub fn idioms_in(text: &str, commands: &Commands, ctx: Context) -> Vec<Idiom> {
     for seq in &commands.sequences {
         out.extend(cd_and_back(seq));
         out.extend(guarded(seq));
+        out.extend(pushd_popd(seq));
+        out.extend(sequence_idioms(text, seq, ctx));
         let mut i = 0;
         while i < seq.len() {
             // `mkdir -p d` just before: `d` is a directory
@@ -189,6 +197,21 @@ fn pipe_idioms(stages: &[Simple]) -> Option<Idiom> {
                 replacement: r,
                 message: "`grep | wc -l` counts matching lines: `grep -c`".into(),
                 note: Some("With several files `grep -c` prints a count per file."),
+                exact: false,
+            })
+        }
+        (
+            [Some("grep"), args @ ..],
+            [Some("head"), Some("-1" | "-n1")] | [Some("head"), Some("-n"), Some("1")],
+        ) if !args.iter().any(|w| matches!(w, Some("-c" | "-l" | "-L"))) => {
+            let mut r = pieces([Piece::Text("grep -m1".into())]);
+            r.extend(rest(a, 1));
+            Some(Idiom {
+                start,
+                end: b.end(),
+                replacement: r,
+                message: "`grep | head -1`: `grep -m1` stops at the first match".into(),
+                note: Some("With several files `grep -m1` prints the first match of each."),
                 exact: false,
             })
         }
@@ -304,8 +327,16 @@ fn simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
         // `sed -i 's/a/b/g' f` in a build: `substituteInPlace`
         "sed" if ctx.build && n == 4 && word(1) == Some("-i") => {
             let script = word(2)?;
-            let body = script.strip_prefix("s/")?;
-            let [from, to, flags] = body.splitn(3, '/').collect::<Vec<_>>()[..] else {
+            // `s/a/b/`, `s|a|b|`, `s#a#b#g`
+            let body = script.strip_prefix('s')?;
+            let delim = body
+                .chars()
+                .next()
+                .filter(|c| !c.is_alphanumeric() && *c != '\\')?;
+            let [from, to, flags] = body[delim.len_utf8()..]
+                .splitn(3, delim)
+                .collect::<Vec<_>>()[..]
+            else {
                 return None;
             };
             let literal = |t: &str| {
@@ -409,6 +440,297 @@ fn simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
                 exact: false,
             })
         }
+        _ => None,
+    }
+}
+
+/// The file these create with its directory (`install -D`, makeWrapper).
+fn creates_parent<'a>(text: &'a str, c: &Simple) -> Option<&'a str> {
+    let n = c.words.len();
+    let raw = |k: usize| c.words.get(k).and_then(|w| text.get(w.1..w.2));
+    match c.word(0)? {
+        "makeWrapper" if n >= 3 => raw(2),
+        "install"
+            if c.words.iter().any(|w| {
+                w.0.as_deref().is_some_and(|t| {
+                    t.starts_with("-D")
+                        || t.starts_with('-') && !t.starts_with("--") && t.contains('D')
+                })
+            }) =>
+        {
+            raw(n - 1)
+        }
+        _ => None,
+    }
+}
+
+fn parent(path: &str) -> &str {
+    path.trim_end_matches('/')
+        .rsplit_once('/')
+        .map_or("", |(p, _)| p)
+}
+
+/// Sequences: `mkdir -p d` before a command that creates `d` itself,
+/// `mkdir -p a; mkdir -p b`, `rm -f x; ln -s y x`, `set -e` in a phase.
+#[allow(clippy::too_many_lines)]
+fn sequence_idioms(text: &str, seq: &[Simple], ctx: Context) -> Vec<Idiom> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < seq.len() {
+        let (first, second) = (&seq[i], &seq[i + 1]);
+        let raw = |c: &Simple, k: usize| c.words.get(k).and_then(|w| text.get(w.1..w.2));
+        let mkdir = mkdir_p(text, first);
+        // `mkdir -p $out/bin; makeWrapper x $out/bin/y`: makeWrapper and
+        // `install -D` create the directory
+        if let Some(dir) = &mkdir
+            && ctx.gnu
+            && let Some(target) = creates_parent(text, second)
+            && key(target).trim_end_matches('/') != dir.trim_end_matches('/')
+            && parent(&key(target)).starts_with(dir.trim_end_matches('/'))
+            // nothing else uses the directory
+            && !seq[i + 2..].iter().any(|c| text.get(c.start()..c.end()).is_some_and(|t| t.contains(dir.as_str())))
+            && only_separators(text, &seq[i..i + 2])
+        {
+            out.push(Idiom {
+                start: first.start(),
+                end: second.end(),
+                replacement: vec![Piece::Word(second.start(), second.end())],
+                message: format!(
+                    "`{}` creates the directory: the `mkdir -p` isn't needed",
+                    second.word(0).unwrap_or("it")
+                ),
+                note: None,
+                exact: true,
+            });
+            i += 2;
+            continue;
+        }
+        // `mkdir -p a; mkdir -p b`: `mkdir -p a b`
+        if mkdir.is_some()
+            && mkdir_p(text, second).is_some()
+            && only_separators(text, &seq[i..i + 2])
+        {
+            let mut j = i + 1;
+            while j + 1 < seq.len()
+                && mkdir_p(text, &seq[j + 1]).is_some()
+                && only_separators(text, &seq[j..j + 2])
+            {
+                j += 1;
+            }
+            let mut r = vec![Piece::Text("mkdir -p".into())];
+            for c in &seq[i..=j] {
+                r.push(Piece::Text(" ".into()));
+                r.push(Piece::Word(c.words[2].1, c.words[2].2));
+            }
+            out.push(Idiom {
+                start: first.start(),
+                end: seq[j].end(),
+                replacement: r,
+                message: "`mkdir -p` takes several directories".into(),
+                note: None,
+                exact: true,
+            });
+            i = j + 1;
+            continue;
+        }
+        // `rm -f x; ln -s y x`: `ln -sfn y x`
+        if first.word(0) == Some("rm")
+            && first.word(1) == Some("-f")
+            && first.words.len() == 3
+            && second.word(0) == Some("ln")
+            && second.word(1) == Some("-s")
+            && second.words.len() == 4
+            && raw(first, 2).map(key) == raw(second, 3).map(key)
+            && only_separators(text, &seq[i..i + 2])
+        {
+            out.push(Idiom {
+                start: first.start(),
+                end: second.end(),
+                replacement: vec![
+                    Piece::Text("ln -sfn ".into()),
+                    Piece::Word(second.words[2].1, second.words[2].2),
+                    Piece::Text(" ".into()),
+                    Piece::Word(second.words[3].1, second.words[3].2),
+                ],
+                message: "`rm -f` then `ln -s`: `ln -sfn` replaces the link".into(),
+                note: None,
+                exact: true,
+            });
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    // `set -e` / `set -euo pipefail` first in a stdenv phase
+    if ctx.phase
+        && let Some(first) = seq.first().or(None)
+        && first.start() == text.len() - text.trim_start().len()
+        && first.word(0) == Some("set")
+        && first.words[1..].iter().all(|w| {
+            matches!(
+                w.0.as_deref(),
+                Some("-e" | "-u" | "-eu" | "-ue" | "-euo" | "-eo" | "-o" | "pipefail")
+            )
+        })
+    {
+        out.push(Idiom {
+            start: first.start(),
+            end: first.end(),
+            replacement: Vec::new(),
+            message: "stdenv phases already run with `set -eu -o pipefail`".into(),
+            note: Some("Remove the line."),
+            exact: false,
+        });
+    }
+    out
+}
+
+/// `pushd d; cmd; popd`: `(cd d && cmd)`.
+fn pushd_popd(seq: &[Simple]) -> Vec<Idiom> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < seq.len() {
+        if seq[i].word(0) != Some("pushd") || seq[i].words.len() != 2 {
+            i += 1;
+            continue;
+        }
+        let back = seq[i + 1..]
+            .iter()
+            .position(|c| matches!(c.word(0), Some("popd" | "pushd" | "cd")));
+        let Some(back) = back.map(|b| i + 1 + b) else {
+            break;
+        };
+        if seq[back].word(0) != Some("popd") || back == i + 1 {
+            i = back;
+            continue;
+        }
+        let dir = &seq[i].words[1];
+        let mut r = vec![Piece::Text("(cd ".into()), Piece::Word(dir.1, dir.2)];
+        for c in &seq[i + 1..back] {
+            r.push(Piece::Text(" && ".into()));
+            r.push(Piece::Word(c.start(), c.end()));
+        }
+        r.push(Piece::Text(")".into()));
+        out.push(Idiom {
+            start: seq[i].start(),
+            end: seq[back].end(),
+            replacement: r,
+            message: "`pushd` there and `popd` back: use a subshell".into(),
+            note: Some("The subshell returns to the directory even when a command fails, without `pushd`'s output; variables it sets don't survive it."),
+            exact: false,
+        });
+        i = back + 1;
+    }
+    out
+}
+
+/// `$(cat f)`, `substituteInPlace --replace`, `installBin`,
+/// `--prefix PATH : ${x}/bin`, `HOME=$(mktemp -d)`, `grep | head -1`.
+fn more_simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
+    let raw = |k: usize| c.words.get(k).and_then(|w| text.get(w.1..w.2));
+    let n = c.words.len();
+    match c.word(0)? {
+        // `$(cat f)` in bash: `$(<f)`
+        "cat" if ctx.bash && n == 2 && c.redirects.is_empty() && !c.other => {
+            let before = text.get(..c.start())?;
+            let after = text.get(c.end()..)?;
+            let file = raw(1)?;
+            if !before.ends_with("$(") || !after.starts_with(')') || file.starts_with('-') {
+                return None;
+            }
+            Some(Idiom {
+                start: c.start(),
+                end: c.end(),
+                replacement: vec![
+                    Piece::Text("<".into()),
+                    Piece::Word(c.words[1].1, c.words[1].2),
+                ],
+                message: "`$(cat file)`: bash reads it without `cat` as `$(<file)`".into(),
+                note: None,
+                exact: true,
+            })
+        }
+        // deprecated `--replace`
+        "substituteInPlace" | "substitute" if ctx.build => {
+            let w = c
+                .words
+                .iter()
+                .find(|w| w.0.as_deref() == Some("--replace"))?;
+            Some(Idiom {
+                start: w.1,
+                end: w.2,
+                replacement: vec![Piece::Text("--replace-fail".into())],
+                message: "`--replace` is deprecated: `--replace-fail` or `--replace-warn`".into(),
+                note: Some(
+                    "`--replace-fail` fails the build when the text isn't found, so a patch can't silently stop applying; use `--replace-warn` where it may be missing.",
+                ),
+                exact: false,
+            })
+        }
+        // `install -Dm755 x $out/bin/x`: `installBin x`
+        "install"
+            if ctx.build
+                && n == 4
+                && matches!(c.word(1), Some("-Dm755" | "-Dm0755" | "-Dm555")) =>
+        {
+            let (src, dst) = (key(raw(2)?), key(raw(3)?));
+            let dir = parent(&dst);
+            if !(dir == "$out/bin" || dir == "${out}/bin") || basename(&src) != basename(&dst) {
+                return None;
+            }
+            Some(Idiom {
+                start: c.start(),
+                end: c.end(),
+                replacement: vec![
+                    Piece::Text("installBin ".into()),
+                    Piece::Word(c.words[2].1, c.words[2].2),
+                ],
+                message: "Installing a program into `$out/bin`: `installBin`".into(),
+                note: Some(
+                    "Add `installShellFiles` to `nativeBuildInputs`; `installBin` installs with mode 755 into `$out/bin`.",
+                ),
+                exact: false,
+            })
+        }
+        // `wrapProgram ... --prefix PATH : ${x}/bin`: `lib.makeBinPath`
+        "wrapProgram" | "makeWrapper" | "wrapProgramShell" => {
+            let k = c.words.windows(4).position(|w| {
+                w[0].0.as_deref() == Some("--prefix")
+                    && w[1].0.as_deref() == Some("PATH")
+                    && w[2].0.as_deref() == Some(":")
+                    && text.get(w[3].1..w[3].2).is_some_and(|v| {
+                        let v = v.trim_matches('"');
+                        v.starts_with(PLACEHOLDER)
+                            && v.ends_with("/bin")
+                            && v.matches(PLACEHOLDER).count() == 1
+                    })
+            })?;
+            let value = &c.words[k + 3];
+            Some(hint(
+                value.1,
+                value.2,
+                "A package's `bin` for `--prefix PATH`: `lib.makeBinPath`".into(),
+                "`--prefix PATH : ${lib.makeBinPath [ pkg ]}` uses the package's `bin` output and takes a list.",
+            ))
+        }
+        // `export HOME=$(mktemp -d)`: `$TMPDIR`
+        "export" if ctx.build && n == 2 => {
+            let w = raw(1)?;
+            if !matches!(w, "HOME=$(mktemp -d)" | "HOME=\"$(mktemp -d)\"") {
+                return None;
+            }
+            Some(Idiom {
+                start: c.start(),
+                end: c.end(),
+                replacement: vec![Piece::Text("export HOME=$TMPDIR".into())],
+                message: "A fresh `HOME` in a build: `$TMPDIR` is already one".into(),
+                note: Some(
+                    "Every build has its own `$TMPDIR`; keep `mktemp -d` if the build needs `HOME` empty and apart from the sources.",
+                ),
+                exact: false,
+            })
+        }
+        // `cp -r x d` + later `chmod -R u+w d`: `--no-preserve=mode`
         _ => None,
     }
 }
@@ -880,7 +1202,10 @@ mod tests {
         idioms_in(
             script,
             &commands(script, "bash"),
-            Context { gnu, build: false },
+            Context {
+                gnu,
+                ..Context::default()
+            },
         )
         .into_iter()
         .map(|i| {
@@ -924,6 +1249,8 @@ mod tests {
             Context {
                 gnu: true,
                 build: true,
+                bash: true,
+                phase: true,
             },
         )
         .into_iter()

@@ -16,3 +16,13 @@ stdenv.mkDerivation { installPhase = ''
    │             ──┬─  
    │               ╰─── SC2086: Double quote to prevent globbing and word splitting.
 ───╯
+[shell_idiom] Warning: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   cp -r dist $out
+   │   │ 
+   │   ╰─ The phase doesn't run runHook preInstall
+ 3 │   chmod 755 $out
+   │                 │ 
+   │                 ╰─ The phase doesn't run runHook postInstall
+───╯

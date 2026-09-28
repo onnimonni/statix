@@ -752,6 +752,9 @@ const NIXOS_OPTIONS: &[&str] = &[
     "fileSystems",
     "hardware",
     "virtualisation",
+    // NixOS VM tests
+    "nodes",
+    "testScript",
 ];
 
 /// Platforms every script in the file of `node` runs on: Linux in a NixOS

@@ -261,35 +261,41 @@ pub fn current_system() -> Option<String> {
 }
 
 fn load(spec: &str) -> Programs {
-    let mut out = Programs::default();
-    for part in spec.split(':') {
-        let Some((system, path)) = part.split_once('=') else {
+    use rayon::prelude::*;
+    let parts: Vec<(&str, &str)> = spec.split(':').filter_map(|p| p.split_once('=')).collect();
+    let indexes = parts
+        .par_iter()
+        .filter_map(|(system, path)| {
+            let text = std::fs::read_to_string(path).ok()?;
+            Some(((*system).to_string(), parse_index(&text)))
+        })
+        .collect();
+    Programs { indexes }
+}
+
+/// `attr<TAB>output<TAB>program` lines. The output is kept in the data but
+/// merged here: `pkgs.jq` in `packages`/`runtimeInputs` puts its
+/// `outputsToInstall` (or `lib.getBin`) on PATH, which isn't in the index;
+/// merging never reports a program missing that one of the outputs has.
+fn parse_index(text: &str) -> Index {
+    let mut index = Index::default();
+    for line in text.lines() {
+        let mut cols = line.split('\t');
+        let (Some(attr), Some(_output), Some(program)) = (cols.next(), cols.next(), cols.next())
+        else {
             continue;
         };
-        let Ok(text) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        let mut index = Index::default();
-        for line in text.lines() {
-            let mut cols = line.split('\t');
-            let (Some(attr), Some(_output), Some(program)) =
-                (cols.next(), cols.next(), cols.next())
-            else {
-                continue;
-            };
-            index
-                .programs
-                .entry(attr.to_string())
-                .or_default()
-                .insert(program.to_string());
-            let providers = index.providers.entry(program.to_string()).or_default();
-            if !providers.iter().any(|p| p == attr) {
-                providers.push(attr.to_string());
-            }
+        index
+            .programs
+            .entry(attr.to_string())
+            .or_default()
+            .insert(program.to_string());
+        let providers = index.providers.entry(program.to_string()).or_default();
+        if !providers.iter().any(|p| p == attr) {
+            providers.push(attr.to_string());
         }
-        out.indexes.insert(system.to_string(), index);
     }
-    out
+    index
 }
 
 /// The package data (loaded once).
@@ -331,8 +337,9 @@ impl Programs {
                 None if self.knows(attr) => Some(false),
                 None => fallback,
             },
-            // no data for this system: the table, or "named like the program"
-            None => fallback.or(Some(attr_name(attr) == program)),
+            // no data for this system: the table, or "named like the program";
+            // anything else is unknown (`custom = writeShellScriptBin "x"`)
+            None => fallback.or_else(|| (attr_name(attr) == program).then_some(true)),
         }
     }
 

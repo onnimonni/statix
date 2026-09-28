@@ -177,13 +177,13 @@ impl Script {
     /// Source range of the rendered text between byte offsets `start..end`.
     pub fn source_range(&self, start: usize, end: usize) -> Option<rnix::TextRange> {
         let position = |byte: usize| {
-            let before = &self.text[..byte];
+            let before = self.text.get(..byte)?;
             let line = before.matches('\n').count() + 1;
             let col = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-            (line, col)
+            Some((line, col))
         };
-        let (l1, c1) = position(start);
-        let (l2, c2) = position(end);
+        let (l1, c1) = position(start)?;
+        let (l2, c2) = position(end)?;
         let (a, _) = self.source_offset(l1, c1, false)?;
         let (b, _) = self.source_offset(l2, c2, true)?;
         Some(rnix::TextRange::new(

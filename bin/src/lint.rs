@@ -99,11 +99,14 @@ pub mod main {
         let results: Vec<_> = stale
             .par_iter()
             .map(|entry| {
+                let _ = lib::take_dependencies();
                 let result = lint_with(entry, &lints);
+                let dependencies = lib::take_dependencies();
                 let refs = cache.is_some().then(|| {
                     lib::referenced_files(entry.contents, entry.file_path)
                         .into_iter()
                         .map(|(path, _, _)| path)
+                        .chain(dependencies)
                         .collect::<Vec<_>>()
                 });
                 (entry, result, refs)

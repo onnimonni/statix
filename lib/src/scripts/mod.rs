@@ -85,6 +85,19 @@ impl Finding {
 
 thread_local! {
     static CURRENT_FILE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static DEPENDENCIES: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Note that the result for the file being linted depends on `path` existing
+/// with its current contents (for the cache).
+pub fn note_dependency(path: PathBuf) {
+    DEPENDENCIES.with(|d| d.borrow_mut().push(path));
+}
+
+/// Files the lints noted as dependencies on this thread since the last call.
+#[must_use]
+pub fn take_dependencies() -> Vec<PathBuf> {
+    DEPENDENCIES.with(|d| std::mem::take(&mut *d.borrow_mut()))
 }
 
 /// Run `f` with `path` as the file being linted, so lints can resolve paths

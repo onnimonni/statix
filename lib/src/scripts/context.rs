@@ -182,14 +182,17 @@ fn value_part(node: &SyntaxNode, value: &SyntaxNode) -> Option<bool> {
                 whole = false;
                 true
             }
-            // lib.mkMerge [ ''...'' ], lib.concatLines [ ... ]: whole lines
+            // lib.mkMerge [ ''...'' ]: whole when alone (other pieces may
+            // define functions this one calls)
             SyntaxKind::NODE_LIST => {
-                whole &= parent
-                    .parent()
-                    .and_then(ast::Apply::cast)
-                    .and_then(|a| a.lambda())
-                    .and_then(|f| fn_name(&f))
-                    .is_some_and(|f| f == "mkMerge" || f == "concatLines");
+                let alone = ast::List::cast(parent.clone()).is_some_and(|l| l.items().count() == 1);
+                whole &= alone
+                    && parent
+                        .parent()
+                        .and_then(ast::Apply::cast)
+                        .and_then(|a| a.lambda())
+                        .and_then(|f| fn_name(&f))
+                        .is_some_and(|f| f == "mkMerge" || f == "concatLines");
                 true
             }
             SyntaxKind::NODE_IF_ELSE => ast::IfElse::cast(parent.clone())

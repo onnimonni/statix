@@ -116,6 +116,20 @@ fn relative_to(root: &Path, cwd: &Path, path: &Path) -> PathBuf {
 }
 
 /// What the saved results depend on besides file contents.
+/// `STATIX_PROGRAMS` with each index file's size and modification time, so
+/// an index updated in place invalidates the cache.
+fn programs_fingerprint() -> String {
+    let spec = std::env::var("STATIX_PROGRAMS").unwrap_or_default();
+    spec.split(':')
+        .map(|part| {
+            let file = part.split_once('=').map_or(part, |(_, f)| f);
+            let (size, mtime) = stat(Path::new(file)).unwrap_or_default();
+            format!("{part}#{size}#{mtime}")
+        })
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
 fn epoch(lints: &LintMap, conf: &ConfFile) -> String {
     let binary = std::env::current_exe()
         .ok()
@@ -132,7 +146,7 @@ fn epoch(lints: &LintMap, conf: &ConfFile) -> String {
             names.join(","),
             lib::tool_versions(),
             // package indexes and systems `undeclared_command` checks
-            std::env::var("STATIX_PROGRAMS").unwrap_or_default(),
+            programs_fingerprint(),
             std::env::var("STATIX_SYSTEMS").unwrap_or_default()
         )
         .as_bytes(),

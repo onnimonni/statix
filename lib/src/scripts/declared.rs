@@ -445,7 +445,37 @@ fn root_of(node: &SyntaxNode) -> SyntaxNode {
 }
 
 /// All bindings in the file with their full attribute path (`config.` removed).
-fn bindings(root: &SyntaxNode) -> Vec<(Vec<String>, AttrpathValue)> {
+type Bindings = std::rc::Rc<Vec<(Vec<String>, AttrpathValue)>>;
+
+fn bindings(root: &SyntaxNode) -> Bindings {
+    // every script in a file looks at the same bindings: keep the last file's
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(SyntaxNode, Bindings)>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    LAST.with(|last| {
+        if let Some((node, b)) = &*last.borrow()
+            && node == root
+        {
+            return b.clone();
+        }
+        let b: Bindings = std::rc::Rc::new(collect_bindings(root));
+        *last.borrow_mut() = Some((root.clone(), b.clone()));
+        b
+    })
+}
+
+/// Whether `inherit` somewhere in `root` binds one of `names`: declarations
+/// we can't follow.
+fn inherits(root: &SyntaxNode, names: &[&str]) -> bool {
+    root.descendants()
+        .filter_map(ast::Inherit::cast)
+        .flat_map(|i| i.attrs())
+        .filter_map(|a| utils::attr_name(&a))
+        .any(|n| names.contains(&n.as_str()))
+}
+
+fn collect_bindings(root: &SyntaxNode) -> Vec<(Vec<String>, AttrpathValue)> {
     root.descendants()
         .filter_map(AttrpathValue::cast)
         .filter_map(|apv| {
@@ -511,12 +541,13 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
     out.commands
         .extend(DEVENV_FUNCTIONS.iter().map(|f| (*f).to_string()));
     let root = root_of(script);
-    for (path, apv) in bindings(&root) {
+    out.incomplete |= inherits(&root, &["packages"]);
+    for (path, apv) in bindings(&root).iter() {
         let p: Vec<&str> = path.iter().map(String::as_str).collect();
         match p.as_slice() {
             // languages.vala.package = pkgs.vala;
-            ["packages"] | ["languages", _, "package"] => add_package_list(&apv, &mut out),
-            ["scripts", n, "packages"] if Some(*n) == name => add_package_list(&apv, &mut out),
+            ["packages"] | ["languages", _, "package"] => add_package_list(apv, &mut out),
+            ["scripts", n, "packages"] if Some(*n) == name => add_package_list(apv, &mut out),
             ["scripts", n, ..] => {
                 if !out.commands.iter().any(|c| c == n) {
                     out.commands.push((*n).to_string());
@@ -524,7 +555,7 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
             }
             ["imports"] => out.incomplete = true,
             ["languages", lang, "enable"] => {
-                if let Some(cond) = enabled(&apv) {
+                if let Some(cond) = enabled(apv) {
                     let attrs = LANGUAGES
                         .iter()
                         .find(|(l, _)| l == lang)
@@ -534,7 +565,7 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
             }
             // languages.javascript.pnpm.enable = true, ...
             ["languages", _, tool, "enable"] => {
-                if let Some(cond) = enabled(&apv) {
+                if let Some(cond) = enabled(apv) {
                     let attr = match *tool {
                         "npm" => "nodejs",
                         t => t,
@@ -543,7 +574,7 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
                 }
             }
             ["services", service, "enable"] => {
-                if let Some(cond) = enabled(&apv) {
+                if let Some(cond) = enabled(apv) {
                     let attrs = SERVICES
                         .iter()
                         .find(|(s, _)| s == service)
@@ -553,7 +584,7 @@ fn devenv(script: &SyntaxNode, name: Option<&str>) -> Declared {
             }
             [module, "enable"] => {
                 if let (Some(cond), Some((_, attrs))) =
-                    (enabled(&apv), MODULES.iter().find(|(m, _)| m == module))
+                    (enabled(apv), MODULES.iter().find(|(m, _)| m == module))
                 {
                     add_packages(attrs, &cond, &mut out);
                 }
@@ -570,11 +601,15 @@ fn systemd(service: &[String], root: &SyntaxNode) -> Declared {
         place: "path",
         platforms: Some(Cond::Platform("linux".into())),
         // initrd services run with the initrd's own PATH
-        incomplete: service.first().is_some_and(|s| s == "boot"),
+        incomplete: service.first().is_some_and(|s| s == "boot") || inherits(root, &["path"]),
         ..Declared::default()
     };
     let mut default_path = true;
-    for (path, apv) in bindings(root) {
+    for (path, apv) in bindings(root).iter() {
+        // other modules may add to the service's `path`
+        if path.first().is_some_and(|p| p == "imports") {
+            out.incomplete = true;
+        }
         let matches_service = path.len() == service.len() + 1
             && path
                 .iter()
@@ -584,7 +619,7 @@ fn systemd(service: &[String], root: &SyntaxNode) -> Declared {
             continue;
         }
         match path.last().map(String::as_str) {
-            Some("path") => add_package_list(&apv, &mut out),
+            Some("path") => add_package_list(apv, &mut out),
             Some("enableDefaultPath")
                 if apv.value().is_some_and(|v| v.syntax().text() == "false") =>
             {
@@ -607,6 +642,11 @@ fn systemd(service: &[String], root: &SyntaxNode) -> Declared {
 fn shell_application(set: &ast::AttrSet) -> Declared {
     let mut out = Declared {
         place: "runtimeInputs",
+        incomplete: set
+            .inherits()
+            .flat_map(|i| i.attrs())
+            .filter_map(|a| utils::attr_name(&a))
+            .any(|n| n == "runtimeInputs"),
         ..Declared::default()
     };
     for apv in set.attrpath_values() {
@@ -672,16 +712,34 @@ fn is_systemd_script(path: &[&str]) -> bool {
             || (n >= 5 && path[n - 4] == "user" && path[n - 5] == "systemd"))
 }
 
+/// Top-level options only NixOS has (devenv has `services`, `env`...).
+const NIXOS_OPTIONS: &[&str] = &[
+    "systemd",
+    "boot",
+    "security",
+    "networking",
+    "fileSystems",
+    "hardware",
+    "virtualisation",
+];
+
+/// Platforms every script in the file of `node` runs on: Linux in a NixOS
+/// module.
+pub fn file_platforms(node: &SyntaxNode) -> Option<Cond> {
+    bindings(&root_of(node))
+        .iter()
+        .any(|(path, _)| {
+            // config.* is stripped already; options.systemd... too
+            let path = path.strip_prefix(&["options".to_string()]).unwrap_or(path);
+            path.first()
+                .is_some_and(|p| NIXOS_OPTIONS.contains(&p.as_str()))
+        })
+        .then(|| Cond::Platform("linux".into()))
+}
+
 /// Declarations for the shell script in `s`, or `None` when its context
 /// doesn't declare dependencies (writeShellScript, stdenv phases...).
 #[must_use]
-/// A file setting `systemd.*` options is a NixOS module.
-fn is_nixos_module(root: &SyntaxNode) -> bool {
-    bindings(root)
-        .iter()
-        .any(|(path, _)| path.first().is_some_and(|p| p == "systemd"))
-}
-
 pub fn declared(s: &ast::Str, lang: Lang) -> Option<Declared> {
     if !matches!(lang, Lang::Shell(_)) {
         return None;
@@ -695,9 +753,7 @@ pub fn declared(s: &ast::Str, lang: Lang) -> Option<Declared> {
         && apply.lambda().and_then(|f| fn_name(&f)).as_deref() == Some("writeShellApplication")
     {
         let mut out = shell_application(&set);
-        // in a NixOS module scripts only run on Linux
-        if is_nixos_module(&root_of(node)) {
-            let linux = Cond::Platform("linux".into());
+        if let Some(linux) = file_platforms(node) {
             out.platforms = Some(out.platforms.map_or(linux.clone(), |c| c.and(linux)));
         }
         return Some(out);

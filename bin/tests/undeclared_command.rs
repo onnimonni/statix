@@ -170,3 +170,63 @@ fn unknown_declarations_are_not_reported() {
     );
     assert_eq!(out, "");
 }
+
+#[test]
+fn codex_review_false_positives() {
+    // unknown local packages, inherited inputs, snippets, sourced files,
+    // cd, heredoc data: nothing to report
+    let out = check(
+        r#"{ pkgs, lib, runtimeInputs, ... }:
+let
+  custom = pkgs.writeShellScriptBin "hello" "echo hi";
+  setup = ''
+    greet() { echo hi; }
+  '';
+in {
+  packages = [ custom ];
+  scripts.a.exec = ''
+    hello
+    cd scripts
+    ./run-elsewhere.sh
+    cat <<'EOF'
+    # statix hello=world
+    EOF
+  '';
+  scripts.b.exec = ''
+    ${setup}
+    greet
+  '';
+  x = pkgs.writeShellApplication {
+    name = "x";
+    inherit runtimeInputs;
+    text = "jq .";
+  };
+}
+"#,
+    );
+    assert_eq!(out, "");
+}
+
+#[test]
+fn codex_review_missed_findings() {
+    let out = check(
+        r#"{ pkgs, ... }: {
+  # statix platforms=bsd
+  a = pkgs.writeShellScript "a" ''
+    /run/current-system/sw/bin/foo
+    "${pkgs.jq}/bin/jqq" .
+    for ((i=0; i<1; i++)); do x=1; done
+  '';
+}
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "2:3:W:31:[undeclared_command] Unknown statix directive `platforms=bsd`",
+            "4:5:W:31:[undeclared_command] `/run/current-system/sw/bin/foo` depends on the host system",
+            "5:5:W:31:[undeclared_command] `pkgs.jq` has no program `jqq`",
+        ]
+    );
+}

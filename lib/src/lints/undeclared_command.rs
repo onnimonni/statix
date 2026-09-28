@@ -74,7 +74,7 @@ use rowan::ast::AstNode as _;
     name = "undeclared_command",
     note = "Command in a shell script isn't declared or doesn't exist",
     code = 31,
-    match_with = SyntaxKind::NODE_STRING
+    match_with = [SyntaxKind::NODE_STRING, SyntaxKind::TOKEN_COMMENT]
 )]
 struct UndeclaredCommand;
 
@@ -91,8 +91,20 @@ struct Finding {
 
 impl Rule for UndeclaredCommand {
     fn validate(&self, node: &SyntaxElement) -> Option<Report> {
-        let NodeOrToken::Node(node) = node else {
-            return None;
+        let node = match node {
+            NodeOrToken::Node(node) => node,
+            // `# statix platforms=...` before a package in a Nix list
+            NodeOrToken::Token(comment) => {
+                let d = directives::parse_line(comment.text())?;
+                if d.unknown.is_empty() {
+                    return None;
+                }
+                return Some(self.report().diagnostic_with_help(
+                    comment.text_range(),
+                    unknown_directive(&d.unknown),
+                    DIRECTIVES_HELP.into(),
+                ));
+            }
         };
         let s = ast::Str::cast(node.clone())?;
         let (script, lang, kind) = scripts::script_of(&s)?;
@@ -103,7 +115,13 @@ impl Rule for UndeclaredCommand {
         let Lang::Shell(shell) = lang else {
             return None;
         };
-        let declared = declared::declared(&s, lang)?;
+        // other scripts (writeShellScript, stdenv phases): declarations are
+        // unknown, but paths and interpolated programs are still checked
+        let declared = declared::declared(&s, lang).unwrap_or_else(|| Declared {
+            incomplete: true,
+            platforms: declared::file_platforms(s.syntax()),
+            ..Declared::default()
+        });
         let findings = check(&s, &script, shell, &declared);
         if findings.is_empty() {
             return None;
@@ -116,6 +134,12 @@ impl Rule for UndeclaredCommand {
     }
 }
 
+const DIRECTIVES_HELP: &str = "Directives are `# statix platforms=darwin,linux`, `# statix provided=cmd1,cmd2` and `# statix disable=<lint>`; platforms are `darwin`, `linux`, `aarch64`, `x86_64`, `unix`, `all` or a system like `aarch64-darwin`.";
+
+fn unknown_directive(unknown: &[String]) -> String {
+    format!("Unknown statix directive `{}`", unknown.join(" "))
+}
+
 /// Commands every host has, never reported.
 const ALWAYS_AVAILABLE: &[&str] = &["rm"];
 
@@ -124,7 +148,9 @@ fn systems_text(systems: &[String]) -> String {
 }
 
 /// The `${...}` source of the placeholder at byte `at` of the script text.
-fn interp_source(s: &ast::Str, script: &Script, at: usize) -> Option<String> {
+fn interp_source(s: &ast::Str, script: &Script, u: &Use) -> Option<String> {
+    // the word may start with a quote: `"${pkgs.jq}/bin/jq"`
+    let at = u.start + script.text.get(u.start..u.end)?.find(PLACEHOLDER)?;
     let src = script.src_at(at).filter(|src| src.interp)?;
     let base: usize = s.syntax().text_range().start().into();
     let text = s.syntax().to_string();
@@ -138,6 +164,19 @@ fn interp_source(s: &ast::Str, script: &Script, at: usize) -> Option<String> {
     )
 }
 
+/// Whether the bare placeholder `u` (a whole command word) may be a script
+/// snippet (`${setup}`, `${cfg.hook}`) rather than a program
+/// (`${lib.getExe pkgs.jq}`, `${pkgs.hello}`).
+fn is_snippet(s: &ast::Str, script: &Script, u: &Use) -> bool {
+    let Some(expr) = interp_source(s, script, u).and_then(|i| parse_expr(&i)) else {
+        return true;
+    };
+    match &expr {
+        ast::Expr::Apply(_) => false,
+        e => !e.syntax().text().to_string().starts_with("pkgs."),
+    }
+}
+
 fn parse_expr(text: &str) -> Option<ast::Expr> {
     rnix::Root::parse(text).ok().ok()?.expr()
 }
@@ -145,7 +184,7 @@ fn parse_expr(text: &str) -> Option<ast::Expr> {
 /// Package and program of an interpolated command: `${pkgs.X}/bin/Y`,
 /// `${lib.getBin pkgs.X}/sbin/Y`, `${lib.getExe' pkgs.X "Y"}`.
 fn interpolated(s: &ast::Str, script: &Script, u: &Use) -> Option<(String, String)> {
-    let interp = interp_source(s, script, u.start)?;
+    let interp = interp_source(s, script, u)?;
     // `${pkgs.jq}/bin/jq`; `${pkg}/bin/x` is a local variable
     if !interp.contains("pkgs.") {
         return None;
@@ -211,7 +250,14 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
     let settings = programs::settings();
     let available = |system: &str, attr: &str| programs.available(system, attr);
     let commands = commands::commands(&script.text, shell);
-    let directives = directives::scoped(&script.text, &commands.spans);
+    let directives = directives::scoped(&script.text, &commands.spans, &commands.data);
+    // functions may come from sourced files or interpolated snippets
+    // (`${setup}` on its own): commands can't be called undeclared
+    let opaque = commands.sources
+        || commands
+            .uses
+            .iter()
+            .any(|u| u.name == PLACEHOLDER && is_snippet(s, script, u));
     let range = |start: usize, end: usize| script.source_range(start, end);
 
     let mut out: Vec<Finding> = Vec::new();
@@ -222,11 +268,8 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
         {
             out.push(Finding {
                 at,
-                message: format!(
-                    "Unknown statix directive `{}`",
-                    d.directive.unknown.join(" ")
-                ),
-                help: "Directives are `# statix platforms=darwin,linux`, `# statix provided=cmd1,cmd2` and `# statix disable=undeclared_command`; platforms are `darwin`, `linux`, `aarch64`, `x86_64`, `unix`, `all` or a system like `aarch64-darwin`.".into(),
+                message: unknown_directive(&d.directive.unknown),
+                help: DIRECTIVES_HELP.into(),
             });
         }
     }
@@ -266,7 +309,9 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
         } else if name.starts_with('/') {
             check_absolute(name, at)
         } else if name.contains('/') {
-            check_relative(name, declared, at)
+            check_relative(name, declared, commands.changes_dir, at)
+        } else if opaque {
+            None
         } else {
             check_declared(name, declared, programs, &effective, &available, at)
         };
@@ -328,15 +373,21 @@ fn check_absolute(name: &str, at: TextRange) -> Option<Finding> {
     })
 }
 
-fn check_relative(name: &str, declared: &Declared, at: TextRange) -> Option<Finding> {
+fn check_relative(
+    name: &str,
+    declared: &Declared,
+    changes_dir: bool,
+    at: TextRange,
+) -> Option<Finding> {
     // devenv runs scripts in the project root, the directory of devenv.nix;
-    // for other modules it's unknown
-    if !declared.devenv || !scripts::current_file_is("devenv.nix") {
+    // for other modules, or after `cd`, it's unknown
+    if !declared.devenv || changes_dir || !scripts::current_file_is("devenv.nix") {
         return None;
     }
     let dir = scripts::current_dir()?;
     let path = dir.join(name.trim_start_matches("./"));
     if path.exists() {
+        scripts::note_dependency(path);
         return None;
     }
     Some(Finding {
@@ -390,7 +441,8 @@ fn check_declared(
             undeclared.push(sys.clone());
         }
     }
-    if undeclared.is_empty() {
+    // unknown declarations may provide it, on any system
+    if undeclared.is_empty() || declared.incomplete {
         return None;
     }
     let on = |systems: &[String]| {
@@ -433,9 +485,6 @@ fn check_declared(
                 systems_text(&undeclared)
             ),
         });
-    }
-    if declared.incomplete {
-        return None;
     }
     let suggestion = programs.providers(name).into_iter().next().map_or_else(
         || format!("the package providing `{name}`"),

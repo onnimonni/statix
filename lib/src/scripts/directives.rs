@@ -50,7 +50,14 @@ pub fn parse_line(line: &str) -> Option<Directive> {
                 );
             }
             "provided" => d.provided.extend(values),
-            "disable" => d.disable.extend(values),
+            "disable" => {
+                for v in &values {
+                    if v != "all" && !crate::LINTS.iter().any(|l| l.name() == v) {
+                        d.unknown.push(format!("disable={v}"));
+                    }
+                }
+                d.disable.extend(values);
+            }
             _ => d.unknown.push(item.to_string()),
         }
     }
@@ -68,15 +75,19 @@ pub struct Scoped {
 }
 
 /// Directives in `text`, scoped with the command `spans` (outermost first
-/// for equal starts).
+/// for equal starts). Lines inside `data` (here-documents, multi-line
+/// strings) aren't comments.
 #[must_use]
-pub fn scoped(text: &str, spans: &[(usize, usize)]) -> Vec<Scoped> {
+pub fn scoped(text: &str, spans: &[(usize, usize)], data: &[(usize, usize)]) -> Vec<Scoped> {
     let first_command = spans.iter().map(|s| s.0).min().unwrap_or(usize::MAX);
     let mut out = Vec::new();
     let mut offset = 0;
     for line in text.split_inclusive('\n') {
         let start = offset;
         offset += line.len();
+        if data.iter().any(|&(a, b)| a <= start && start < b) {
+            continue;
+        }
         let Some(directive) = parse_line(line) else {
             continue;
         };
@@ -125,7 +136,7 @@ mod tests {
         let if_block = (if_start, text.len() - 1);
         let pb = text.find("pbcopy\n").unwrap();
         let spans = [echo, if_block, (pb, pb + 6)];
-        let d = scoped(text, &spans);
+        let d = scoped(text, &spans, &[]);
         assert_eq!(d[0].scope, (0, text.len()));
         assert_eq!(d[1].scope, if_block);
     }

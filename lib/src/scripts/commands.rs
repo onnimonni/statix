@@ -129,6 +129,15 @@ pub struct Commands {
     pub spans: Vec<(usize, usize)>,
     /// The script (or a nested one) didn't parse; the result may be partial.
     pub incomplete: bool,
+    /// The script changes directory (`cd`, `pushd`): relative paths are
+    /// relative to somewhere else.
+    pub changes_dir: bool,
+    /// The script sources other files (`source`, `.`), which may define
+    /// functions and aliases.
+    pub sources: bool,
+    /// Byte ranges of data (here-documents, multi-line words), which can't
+    /// hold comments.
+    pub data: Vec<(usize, usize)>,
 }
 
 /// Commands `text` (a `shell` script) runs.
@@ -144,12 +153,14 @@ pub fn commands(text: &str, shell: &str) -> Commands {
             sh_mode: matches!(shell, "sh" | "dash"),
             ..ParserOptions::default()
         },
+        top: text.to_string(),
         raw: Vec::new(),
+        via: Vec::new(),
         functions: HashSet::new(),
         aliases: HashSet::new(),
         out: Commands::default(),
     };
-    walker.script(text, 0, 0, true);
+    walker.script(text, 0, 0, None);
 
     let Walker {
         raw,
@@ -161,8 +172,12 @@ pub fn commands(text: &str, shell: &str) -> Commands {
     } = walker;
     // Classify now that all functions and aliases are known (a function
     // may be defined after it is used).
+    let is_function = |name: &str| functions.contains(name) || aliases.contains(name);
     out.uses = raw
         .into_iter()
+        // `sudo() { ...; }; sudo x`: x is an argument, not a command
+        .filter(|(_, via)| !via.iter().any(|runner| is_function(runner)))
+        .map(|(u, _)| u)
         .filter(|u| {
             let name = u.name.strip_prefix('\\').unwrap_or(&u.name);
             let builtin = builtins.contains(&name);
@@ -201,7 +216,12 @@ struct Arg {
 struct Walker {
     builtins: &'static [&'static str],
     options: ParserOptions,
-    raw: Vec<Use>,
+    /// The whole script text.
+    top: String,
+    /// Uses, with the commands that run them (`sudo x`: `["sudo"]`).
+    raw: Vec<(Use, Vec<String>)>,
+    /// Commands running the command being walked.
+    via: Vec<String>,
     functions: HashSet<String>,
     aliases: HashSet<String>,
     out: Commands,
@@ -219,10 +239,16 @@ struct Source<'a> {
     bytes: &'a [usize],
     base: usize,
     depth: usize,
+    /// Positions in a nested script whose text differs from its source
+    /// (`eval $'...'`): every use is reported at this range.
+    clamp: Option<(usize, usize)>,
 }
 
 impl Source<'_> {
     fn byte(&self, char_index: usize) -> usize {
+        if let Some((start, _)) = self.clamp {
+            return start;
+        }
         self.base
             + self
                 .bytes
@@ -234,7 +260,7 @@ impl Source<'_> {
 
 impl Walker {
     /// Walk `text` (a script), which starts at byte `base` of the outer script.
-    fn script(&mut self, text: &str, base: usize, depth: usize, top: bool) {
+    fn script(&mut self, text: &str, base: usize, depth: usize, clamp: Option<(usize, usize)>) {
         if depth > MAX_DEPTH {
             return;
         }
@@ -248,11 +274,11 @@ impl Walker {
             bytes: &bytes,
             base,
             depth,
+            clamp,
         };
         for list in &program.complete_commands {
             self.list(list, &src);
         }
-        let _ = top;
     }
 
     fn list(&mut self, list: &CompoundList, src: &Source) {
@@ -303,7 +329,8 @@ impl Walker {
 
     fn compound(&mut self, compound: &CompoundCommand, src: &Source) {
         match compound {
-            CompoundCommand::Arithmetic(_) | CompoundCommand::ArithmeticForClause(_) => {}
+            CompoundCommand::Arithmetic(_) => {}
+            CompoundCommand::ArithmeticForClause(clause) => self.list(&clause.body.list, src),
             CompoundCommand::BraceGroup(group) => self.list(&group.list, src),
             CompoundCommand::Subshell(subshell) => self.list(&subshell.list, src),
             CompoundCommand::ForClause(for_clause) => {
@@ -378,13 +405,19 @@ impl Walker {
                 IoFileRedirectTarget::Fd(_) => {}
             },
             // Only command substitutions of unquoted here-docs run.
-            IoRedirect::HereDocument(_, doc) if doc.requires_expansion => {
-                self.word(&doc.doc, src);
+            IoRedirect::HereDocument(_, doc) => {
+                if let Some(loc) = &doc.doc.loc {
+                    self.out
+                        .data
+                        .push((src.byte(loc.start.index), src.byte(loc.end.index)));
+                }
+                if doc.requires_expansion {
+                    self.word(&doc.doc, src);
+                }
             }
             IoRedirect::HereString(_, w) | IoRedirect::OutputAndError(w, _) => {
                 self.word(w, src);
             }
-            IoRedirect::HereDocument(..) => {}
         }
     }
 
@@ -394,8 +427,11 @@ impl Walker {
         let (start, end) = w.loc.as_ref().map_or((src.base, src.base), |loc| {
             (src.byte(loc.start.index), src.byte(loc.end.index))
         });
+        if w.value.contains('\n') {
+            self.out.data.push((start, end));
+        }
         let text = match word::parse(&w.value, &self.options) {
-            Ok(pieces) => self.pieces(&pieces, start, src),
+            Ok(pieces) => self.pieces(&pieces, start, src, &w.value),
             Err(_) => None,
         };
         Arg { text, start, end }
@@ -407,6 +443,7 @@ impl Walker {
         pieces: &[word::WordPieceWithSource],
         start: usize,
         src: &Source,
+        raw: &str,
     ) -> Option<String> {
         let mut text = Some(String::new());
         let add = |text: &mut Option<String>, s: &str| {
@@ -417,31 +454,56 @@ impl Walker {
         for piece in pieces {
             let at = start + piece.start_index;
             match &piece.piece {
-                WordPiece::Text(s)
-                | WordPiece::SingleQuotedText(s)
-                | WordPiece::AnsiCQuotedText(s) => {
+                WordPiece::Text(s) | WordPiece::SingleQuotedText(s) => {
                     add(&mut text, s);
                 }
+                // escapes aren't decoded: `$'j\x71'` is unknown
+                WordPiece::AnsiCQuotedText(s) if s.contains('\\') => text = None,
+                WordPiece::AnsiCQuotedText(s) => add(&mut text, s),
                 WordPiece::EscapeSequence(s) => add(&mut text, s.strip_prefix('\\').unwrap_or(s)),
                 WordPiece::DoubleQuotedSequence(inner)
                 | WordPiece::GettextDoubleQuotedSequence(inner) => {
                     // inner pieces are relative to the word too
-                    match self.pieces(inner, start, src) {
+                    match self.pieces(inner, start, src, raw) {
                         Some(s) => add(&mut text, &s),
                         None => text = None,
                     }
                 }
                 WordPiece::CommandSubstitution(script) => {
-                    self.script(script, at + 2, src.depth + 1, false);
+                    self.script(script, at + 2, src.depth + 1, src.clamp);
                     text = None;
                 }
                 WordPiece::BackquotedCommandSubstitution(script) => {
-                    self.script(script, at + 1, src.depth + 1, false);
+                    self.script(script, at + 1, src.depth + 1, src.clamp);
                     text = None;
                 }
-                WordPiece::TildeExpansion(_)
-                | WordPiece::ParameterExpansion(_)
-                | WordPiece::ArithmeticExpression(_) => text = None,
+                WordPiece::ParameterExpansion(_) => {
+                    // `${x:-$(jq .)}`: commands in the operand
+                    if let Some(inner) = raw
+                        .get(piece.start_index..piece.end_index)
+                        .and_then(|r| r.strip_prefix("${"))
+                        .and_then(|r| r.strip_suffix('}'))
+                        && let Some(op) = inner.trim_start_matches(['!', '#']).find(|c: char| {
+                            !(c.is_ascii_alphanumeric() || c == '_' || c == '@' || c == '*')
+                        })
+                    {
+                        let skip = inner.len() - inner.trim_start_matches(['!', '#']).len() + op;
+                        let operand_at = skip + inner[skip..].len()
+                            - inner[skip..]
+                                .trim_start_matches([
+                                    ':', '-', '=', '+', '?', '#', '%', '/', '^', ',',
+                                ])
+                                .len();
+                        let operand = &inner[operand_at..];
+                        if (operand.contains("$(") || operand.contains('`'))
+                            && let Ok(inner_pieces) = word::parse(operand, &self.options)
+                        {
+                            self.pieces(&inner_pieces, at + 2 + operand_at, src, operand);
+                        }
+                    }
+                    text = None;
+                }
+                WordPiece::TildeExpansion(_) | WordPiece::ArithmeticExpression(_) => text = None,
             }
         }
         text
@@ -489,23 +551,34 @@ impl Walker {
     /// `text` (a static string argument) as a nested script.
     fn nested(&mut self, arg: &Arg, src: &Source) {
         if let Some(text) = &arg.text {
-            // The string is quoted in the outer script; positions inside it
-            // are approximate (start of the argument), but commands are found.
+            // Exact positions when the text is in the script as is (`'...'`,
+            // `"..."` without escapes), else the whole argument.
             let offset = arg.start + usize::from(arg.end > arg.start + text.len());
-            self.script(text, offset, src.depth + 1, false);
+            let exact = src.clamp.is_none()
+                && self.top.get(offset..offset + text.len()) == Some(text.as_str());
+            let clamp = if exact {
+                None
+            } else {
+                Some(src.clamp.unwrap_or((arg.start, arg.end)))
+            };
+            self.script(text, offset, src.depth + 1, clamp);
         }
     }
 
-    fn record(&mut self, arg: &Arg, lookup: Lookup) {
+    fn record(&mut self, arg: &Arg, lookup: Lookup, src: &Source) {
         if let Some(name) = &arg.text
             && !name.is_empty()
         {
-            self.raw.push(Use {
-                name: name.clone(),
-                start: arg.start,
-                end: arg.end,
-                lookup,
-            });
+            let (start, end) = src.clamp.unwrap_or((arg.start, arg.end));
+            self.raw.push((
+                Use {
+                    name: name.clone(),
+                    start,
+                    end,
+                    lookup,
+                },
+                self.via.clone(),
+            ));
         }
     }
 
@@ -543,6 +616,8 @@ impl Walker {
         // builtins / keywords that take commands
         if lookup != Lookup::External && !self.functions.contains(bare) {
             match bare {
+                "cd" | "pushd" | "popd" => self.out.changes_dir = true,
+                "source" | "." => self.out.sources = true,
                 "command" => {
                     let (flags, cmd) = split_flags(rest);
                     if flags.contains('v') || flags.contains('V') {
@@ -619,8 +694,14 @@ impl Walker {
             }
         }
 
-        self.record(first, lookup);
+        self.record(first, lookup, src);
+        self.via.push(bare.to_string());
+        self.runs(program, rest, src);
+        self.via.pop();
+    }
 
+    /// Commands `program` runs with arguments `rest`.
+    fn runs(&mut self, program: &str, rest: &[Arg], src: &Source) {
         if program == "which" {
             self.probe(rest);
             return;
@@ -718,7 +799,8 @@ fn skip_options<'a>(
         }
         i += 1;
     }
-    Some(&args[i..])
+    // `exec -a` without its value
+    Some(args.get(i..).unwrap_or_default())
 }
 
 /// Options of a command that runs another command.
@@ -957,10 +1039,14 @@ fn skip_known<'a>(args: &'a [Arg], execer: &Execer) -> Option<&'a [Arg]> {
     while i < args.len() {
         let text = args[i].text.as_deref()?;
         if text == "--" {
-            i += 1;
+            // `timeout -- 5 cmd`: positionals come after `--` too
+            i += 1 + positionals;
             break;
         }
-        if let Some(long) = text.strip_prefix("--") {
+        let numeric = text.len() > 1 && text[1..].bytes().all(|b| b.is_ascii_digit());
+        if numeric && text.starts_with('-') && !text[1..].starts_with(execer.flags_short) {
+            // `nice -5 cmd`
+        } else if let Some(long) = text.strip_prefix("--") {
             let name = long.split('=').next().unwrap_or(long);
             if execer.value_long.contains(&name) {
                 if !long.contains('=') {
@@ -969,15 +1055,7 @@ fn skip_known<'a>(args: &'a [Arg], execer: &Execer) -> Option<&'a [Arg]> {
             } else if !execer.flags_long.contains(&name) {
                 return None;
             }
-        } else if let Some(short) = text
-            .strip_prefix('-')
-            // `-5` is a value (`nice -5`) unless it's a known flag (`xargs -0`)
-            .filter(|s| {
-                s.chars()
-                    .next()
-                    .is_some_and(|c| !c.is_ascii_digit() || execer.flags_short.contains(&c))
-            })
-        {
+        } else if let Some(short) = text.strip_prefix('-').filter(|s| !s.is_empty()) {
             for (j, c) in short.char_indices() {
                 if execer.no_command.contains(&c) {
                     return None;
@@ -1008,6 +1086,23 @@ fn skip_known<'a>(args: &'a [Arg], execer: &Execer) -> Option<&'a [Arg]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_positions_stay_in_bounds() {
+        for script in ["eval $'\u{e9}'", "eval \"a\\\"b\"; bash -c $'x\\ty'"] {
+            let c = commands(script, "bash");
+            assert!(
+                c.uses
+                    .iter()
+                    .all(|u| u.end <= script.len() && script.is_char_boundary(u.start))
+            );
+        }
+        let c = commands(
+            "cd x; source ./lib.sh; cat <<EOF\n# statix x=y\nEOF\n",
+            "bash",
+        );
+        assert!(c.changes_dir && c.sources && !c.data.is_empty());
+    }
 
     fn names(script: &str) -> Vec<String> {
         commands(script, "bash")
@@ -1052,7 +1147,17 @@ mod tests {
             ("sudo -u root rm -rf /x", &["sudo", "rm"]),
             ("sudo -v", &["sudo"]),
             ("nice -n 5 make", &["nice", "make"]),
-            ("x=$(git rev-parse HEAD); echo \"${x:-$(date)}\"", &["git"]),
+            (
+                "x=$(git rev-parse HEAD); echo \"${x:-$(date)}\"",
+                &["git", "date"],
+            ),
+            // runners that are functions don't run their arguments
+            ("sudo() { echo ok; }; sudo imaginary", &[]),
+            ("timeout -- 5 ls", &["timeout", "ls"]),
+            ("nice -5 ls", &["nice", "ls"]),
+            ("$'j\\x71' .", &[]),
+            ("for ((i=0; i<1; i++)); do jq .; done", &["jq"]),
+            ("exec -a", &[]),
             (
                 "cat <(sort a) | while read -r l; do tr a b <<< \"$l\"; done",
                 &["cat", "sort", "tr"],

@@ -9,12 +9,10 @@ stdenv.mkDerivation { installPhase = ''
 ---
 --- <temp_file_path>
 +++ <temp_file_path> [fixed]
-@@ -1,5 +1,5 @@
+@@ -1,5 +1,3 @@
  stdenv.mkDerivation { installPhase = ''
 -  mkdir -p $out/bin
 -  cp tool $out/bin/tool
 -  chmod 755 $out/bin/tool
-+  runHook preInstall
 +  install -Dm755 tool "$out"/bin/tool
-+  runHook postInstall
  ''; }

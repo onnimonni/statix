@@ -1,0 +1,75 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+{ enterShell = ''
+  cp "x; echo INJECTED" d/; chmod 755 "d/x; echo INJECTED"
+  cat input | > output sort
+  v=$(cat Cargo.*)
+  mkdir -p foo; install -Dm644 src foobar/file
+  mkdir -p a; mkdir -p */b
+  mkdir -p blocked/child && mkdir -p later
+  grep() { echo custom; }; egrep workspace Cargo.toml
+  sh -c 'v=$(cat file)'
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 4,
+              "column": 3
+            },
+            "to": {
+              "line": 4,
+              "column": 4
+            }
+          },
+          "message": "SC2034: v appears unused. Verify use (or export if used externally).",
+          "suggestion": null,
+          "fixable": false,
+          "help": "The variable is never used in this script. Remove it, or export it if another process reads it. See https://www.shellcheck.net/wiki/SC2034"
+        },
+        {
+          "at": {
+            "from": {
+              "line": 6,
+              "column": 24
+            },
+            "to": {
+              "line": 6,
+              "column": 25
+            }
+          },
+          "message": "SC2035: Use ./*glob* or -- *glob* so names with dashes won't become options.",
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://www.shellcheck.net/wiki/SC2035"
+        },
+        {
+          "at": {
+            "from": {
+              "line": 8,
+              "column": 28
+            },
+            "to": {
+              "line": 8,
+              "column": 33
+            }
+          },
+          "message": "SC2196: egrep is non-standard and deprecated. Use grep -E instead.",
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://www.shellcheck.net/wiki/SC2196"
+        }
+      ]
+    }
+  ]
+}

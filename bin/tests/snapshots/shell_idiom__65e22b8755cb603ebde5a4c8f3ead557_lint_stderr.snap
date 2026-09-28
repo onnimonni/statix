@@ -7,12 +7,12 @@ source: bin/tests/shell_idiom.rs
   chmod 750 /run/x/helper
 ''; }
 ---
-[shell_idiom] Warning: Shell commands with a shorter idiom
+[shell_idiom] Advice: Shell commands with a shorter idiom
    ╭─[ <temp_file_path>:2:3 ]
    │
  2 │ ╭─▶   cp ${cfg.package}/bin/helper /run/x/helper
    ┆ ┆   
  4 │ ├─▶   chmod 750 /run/x/helper
    │ │                               
-   │ ╰─────────────────────────────── cp + chgrp + chmod can be one install: install -m 750 -g x ${cfg.package}/bin/helper /run/x/helper
+   │ ╰─────────────────────────────── cp + chgrp + chmod can be one install
 ───╯

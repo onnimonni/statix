@@ -1,0 +1,24 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  runHook "preInstall"
+  cp ${src} dst; chown ${owner} dst; chmod 755 dst
+  cp src existingDir; chmod 700 existingDir
+  cat Cargo.toml | read value
+  rm -f dst && ln -s src dst
+  runHook "postInstall"
+''; }
+---
+--- <temp_file_path>
++++ <temp_file_path> [fixed]
+@@ -1,8 +1,8 @@
+ stdenv.mkDerivation { installPhase = ''
+   runHook "preInstall"
+   cp ${src} dst; chown ${owner} dst; chmod 755 dst
+   cp src existingDir; chmod 700 existingDir
+-  cat Cargo.toml | read value
++  cat Cargo.toml | read -r value
+   rm -f dst && ln -s src dst
+   runHook "postInstall"
+ ''; }

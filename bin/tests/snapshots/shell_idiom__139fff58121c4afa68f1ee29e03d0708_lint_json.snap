@@ -1,0 +1,124 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  runHook "preInstall"
+  cp ${src} dst; chown ${owner} dst; chmod 755 dst
+  cp src existingDir; chmod 700 existingDir
+  cat Cargo.toml | read value
+  rm -f dst && ln -s src dst
+  runHook "postInstall"
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Hint",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 5,
+              "column": 20
+            },
+            "to": {
+              "line": 5,
+              "column": 24
+            }
+          },
+          "message": "SC2162: read without -r will mangle backslashes.",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 38
+              },
+              "to": {
+                "line": 8,
+                "column": 3
+              }
+            },
+            "fix": "''\n  runHook \"preInstall\"\n  cp ${src} dst; chown ${owner} dst; chmod 755 dst\n  cp src existingDir; chmod 700 existingDir\n  cat Cargo.toml | read -r value\n  rm -f dst && ln -s src dst\n  runHook \"postInstall\"\n''"
+          },
+          "fixable": true
+        }
+      ]
+    },
+    {
+      "name": "shell_idiom",
+      "note": "Shell commands with a shorter idiom",
+      "code": 33,
+      "severity": "Hint",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 3,
+              "column": 3
+            },
+            "to": {
+              "line": 3,
+              "column": 51
+            }
+          },
+          "message": "`cp` + `chown` + `chmod` can be one `install`",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Use `install -m 755 -o __nix_interp__ ${src} dst`."
+        },
+        {
+          "at": {
+            "from": {
+              "line": 4,
+              "column": 3
+            },
+            "to": {
+              "line": 4,
+              "column": 44
+            }
+          },
+          "message": "`cp` + `chmod` can be one `install`",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Use `install -m 700 src existingDir`."
+        },
+        {
+          "at": {
+            "from": {
+              "line": 5,
+              "column": 3
+            },
+            "to": {
+              "line": 5,
+              "column": 30
+            }
+          },
+          "message": "`cat` only feeds `read`: read the file directly",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Use `read value < Cargo.toml`."
+        },
+        {
+          "at": {
+            "from": {
+              "line": 6,
+              "column": 3
+            },
+            "to": {
+              "line": 6,
+              "column": 29
+            }
+          },
+          "message": "`rm -f` then `ln -s`: `ln -sfn` replaces the link",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Use `ln -sfn src dst`. Unlike `rm -f`, `ln -sfn` doesn't fail when the target is a directory: it links inside it."
+        }
+      ]
+    }
+  ]
+}

@@ -151,6 +151,8 @@ pub struct Commands {
     pub simples: Vec<Simple>,
     /// `for x in $(ls ...)`: byte range of the `$(ls ...)` word.
     pub ls_loops: Vec<(usize, usize)>,
+    /// Functions and aliases the script defines.
+    pub defined: HashSet<String>,
     /// Files written with text known before the script runs:
     /// `cat > x.json <<'EOF'`, `echo '{}' > x.json`.
     pub writes: Vec<Write>,
@@ -240,6 +242,7 @@ pub fn commands(text: &str, shell: &str) -> Commands {
         via: Vec::new(),
         last_simple: None,
         after_and: false,
+        in_string: 0,
         functions: HashSet::new(),
         aliases: HashSet::new(),
         out: Commands::default(),
@@ -254,6 +257,7 @@ pub fn commands(text: &str, shell: &str) -> Commands {
         mut out,
         ..
     } = walker;
+    out.defined = functions.iter().chain(&aliases).cloned().collect();
     // Classify now that all functions and aliases are known (a function
     // may be defined after it is used).
     let is_function = |name: &str| functions.contains(name) || aliases.contains(name);
@@ -309,6 +313,9 @@ struct Walker {
     last_simple: Option<Simple>,
     /// The next command runs after `&&`.
     after_and: bool,
+    /// Inside a string run as a script (`sh -c '...'`, `eval`): another
+    /// dialect maybe; commands aren't recorded for idioms.
+    in_string: usize,
     functions: HashSet<String>,
     aliases: HashSet<String>,
     out: Commands,
@@ -744,7 +751,7 @@ impl Walker {
         self.invocation(&args, Lookup::Any, src);
         // `$(...)` nested commands have exact positions; `eval`/`bash -c`
         // strings don't
-        if src.clamp.is_some() || args.is_empty() {
+        if src.clamp.is_some() || self.in_string > 0 || args.is_empty() {
             return;
         }
         let mut redirects = Vec::new();
@@ -786,7 +793,13 @@ impl Walker {
                 _ => other = true,
             }
         }
-        // `< in cmd`: redirections may come first
+        // `> out cmd`: the span would miss the operator
+        if redirects
+            .iter()
+            .any(|r| args.first().is_some_and(|a| r.target.1 < a.start))
+        {
+            other = true;
+        }
         let start = redirects
             .iter()
             .map(|r| r.target.1)
@@ -844,7 +857,9 @@ impl Walker {
             } else {
                 Some(src.clamp.unwrap_or((arg.start, arg.end)))
             };
+            self.in_string += 1;
             self.script(text, offset, src.depth + 1, clamp);
+            self.in_string -= 1;
         }
     }
 

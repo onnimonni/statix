@@ -1,0 +1,35 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  runHook "preInstall"
+  cp ${src} dst; chown ${owner} dst; chmod 755 dst
+  cp src existingDir; chmod 700 existingDir
+  cat Cargo.toml | read value
+  rm -f dst && ln -s src dst
+  runHook "postInstall"
+''; }
+---
+[shellcheck] Advice: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:5:20 ]
+   │
+ 5 │   cat Cargo.toml | read value
+   │                    ──┬─  
+   │                      ╰─── SC2162: read without -r will mangle backslashes.
+───╯
+[shell_idiom] Advice: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:3:3 ]
+   │
+ 3 │   cp ${src} dst; chown ${owner} dst; chmod 755 dst
+   │   ────────────────────────┬───────────────────────  
+   │                           ╰───────────────────────── cp + chown + chmod can be one install
+ 4 │   cp src existingDir; chmod 700 existingDir
+   │   ────────────────────┬────────────────────  
+   │                       ╰────────────────────── cp + chmod can be one install
+ 5 │   cat Cargo.toml | read value
+   │   ─────────────┬─────────────  
+   │                ╰─────────────── cat only feeds read: read the file directly
+ 6 │   rm -f dst && ln -s src dst
+   │   ─────────────┬────────────  
+   │                ╰────────────── rm -f then ln -s: ln -sfn replaces the link
+───╯

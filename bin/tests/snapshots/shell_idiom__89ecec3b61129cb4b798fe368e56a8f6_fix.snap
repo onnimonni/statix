@@ -1,0 +1,14 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+{ enterShell = ''
+  cp "x; echo INJECTED" d/; chmod 755 "d/x; echo INJECTED"
+  cat input | > output sort
+  v=$(cat Cargo.*)
+  mkdir -p foo; install -Dm644 src foobar/file
+  mkdir -p a; mkdir -p */b
+  mkdir -p blocked/child && mkdir -p later
+  grep() { echo custom; }; egrep workspace Cargo.toml
+  sh -c 'v=$(cat file)'
+''; }
+---

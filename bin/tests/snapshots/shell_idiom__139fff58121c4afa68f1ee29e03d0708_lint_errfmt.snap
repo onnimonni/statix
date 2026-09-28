@@ -1,0 +1,17 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  runHook "preInstall"
+  cp ${src} dst; chown ${owner} dst; chmod 755 dst
+  cp src existingDir; chmod 700 existingDir
+  cat Cargo.toml | read value
+  rm -f dst && ln -s src dst
+  runHook "postInstall"
+''; }
+---
+<temp_file_path>>5:20:I:28:[shellcheck] SC2162: read without -r will mangle backslashes.
+<temp_file_path>>3:3:I:33:[shell_idiom] `cp` + `chown` + `chmod` can be one `install`
+<temp_file_path>>4:3:I:33:[shell_idiom] `cp` + `chmod` can be one `install`
+<temp_file_path>>5:3:I:33:[shell_idiom] `cat` only feeds `read`: read the file directly
+<temp_file_path>>6:3:I:33:[shell_idiom] `rm -f` then `ln -s`: `ln -sfn` replaces the link

@@ -7,12 +7,3 @@ source: bin/tests/shell_idiom.rs
   chmod 750 /run/x/helper
 ''; }
 ---
---- <temp_file_path>
-+++ <temp_file_path> [fixed]
-@@ -1,5 +1,3 @@
- { systemd.services.x.preStart = ''
--  cp ${cfg.package}/bin/helper /run/x/helper
--  chgrp x /run/x/helper
--  chmod 750 /run/x/helper
-+  install -m 750 -g x ${cfg.package}/bin/helper /run/x/helper
- ''; }

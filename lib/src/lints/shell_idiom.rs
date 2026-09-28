@@ -106,6 +106,39 @@ fn context(s: &ast::Str, kind: Kind, shell: &str) -> idioms::Context {
     }
 }
 
+/// The `${...}` interpolations in Nix source `text`, in order.
+fn interpolations(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        // `''${` is an escaped, literal `${`
+        let escaped = i >= 2 && &bytes[i - 2..i] == b"''";
+        if bytes[i] == b'$' && bytes[i + 1] == b'{' && !escaped {
+            let mut depth = 0;
+            let mut j = i + 1;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            out.push(text[i..=j.min(bytes.len() - 1)].to_string());
+            i = j + 1;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
 /// 1-based (line, column in chars) of byte `at` in `text`.
 fn line_col(text: &str, at: usize) -> Option<(usize, usize)> {
     let before = text.get(..at)?;
@@ -128,7 +161,11 @@ fn change(script: &Script, idiom: &idioms::Idiom) -> Option<Change> {
 
 /// `installPhase = ''...''` without `runHook preInstall` / `postInstall`:
 /// hooks from `preInstall = ...` and setup hooks don't run.
-fn missing_run_hooks(s: &ast::Str, text: &str) -> Vec<idioms::Idiom> {
+fn missing_run_hooks(
+    s: &ast::Str,
+    text: &str,
+    commands: &commands::Commands,
+) -> Vec<idioms::Idiom> {
     let Some(hook) = phase_of(s) else {
         return Vec::new();
     };
@@ -138,30 +175,37 @@ fn missing_run_hooks(s: &ast::Str, text: &str) -> Vec<idioms::Idiom> {
         return Vec::new();
     }
     let (pre, post) = (format!("runHook pre{hook}"), format!("runHook post{hook}"));
+    // `runHook preInstall`, `runHook "preInstall"`: the parsed calls
+    let runs = |name: &str| {
+        commands
+            .uses
+            .iter()
+            .any(|u| u.name == "runHook" && u.args.first().and_then(Option::as_deref) == Some(name))
+    };
     let start = text.len() - text.trim_start().len();
     let end = text.trim_end().len();
     let mut out = Vec::new();
     let note = Some(
-        "Overriding a phase skips its hooks unless it runs them: `preInstall`/`postInstall` from the derivation and from setup hooks.",
+        "Overriding a phase skips its hooks unless it runs them: `preInstall`/`postInstall` from the derivation and from setup hooks. Leave them out only on purpose.",
     );
-    if !text.contains(&pre) {
+    if !runs(&format!("pre{hook}")) {
         out.push(idioms::Idiom {
             start,
             end: start,
             replacement: vec![idioms::Piece::Text(format!("{pre}\n"))],
             message: format!("The phase doesn't run `{pre}`"),
             note,
-            exact: true,
+            exact: false,
         });
     }
-    if !text.contains(&post) {
+    if !runs(&format!("post{hook}")) {
         out.push(idioms::Idiom {
             start: end,
             end,
             replacement: vec![idioms::Piece::Text(format!("\n{post}"))],
             message: format!("The phase doesn't run `{post}`"),
             note,
-            exact: true,
+            exact: false,
         });
     }
     out
@@ -178,12 +222,30 @@ impl Rule for ShellIdiom {
             return None;
         };
         let ctx = context(&s, kind, shell);
-        let mut found =
-            idioms::idioms_in(&script.text, &commands::commands(&script.text, shell), ctx);
-        found.extend(missing_run_hooks(&s, &script.text));
+        let commands = commands::commands(&script.text, shell);
+        let mut found = idioms::idioms_in(&script.text, &commands, ctx);
+        found.extend(missing_run_hooks(&s, &script.text, &commands));
         found.sort_by_key(|i| i.start);
         if found.is_empty() {
             return None;
+        }
+        // words as written in Nix (`${...}`, not the placeholder)
+        let base: usize = s.syntax().text_range().start().into();
+        let source = s.syntax().to_string();
+        let nix_word = |a: usize, b: usize| {
+            let r = script.source_range(a, b)?;
+            let (a, b): (usize, usize) = (r.start().into(), r.end().into());
+            source.get(a - base..b - base).map(String::from)
+        };
+        // a fix puts `${...}` back in order: exact only if they keep it
+        for idiom in &mut found {
+            if idiom.exact {
+                let before = nix_word(idiom.start, idiom.end).map(|t| interpolations(&t));
+                let after = idiom.render(nix_word).map(|t| interpolations(&t));
+                if before.is_none() || before != after {
+                    idiom.exact = false;
+                }
+            }
         }
         // the exact ones are fixed together
         let changes: Vec<Change> = found
@@ -194,14 +256,6 @@ impl Rule for ShellIdiom {
         let fixed = script.apply(&s, &changes);
         let mut report = self.report();
         let mut suggested = false;
-        // words as written in Nix (`${...}`, not the placeholder)
-        let base: usize = s.syntax().text_range().start().into();
-        let source = s.syntax().to_string();
-        let nix_word = |a: usize, b: usize| {
-            let r = script.source_range(a, b)?;
-            let (a, b): (usize, usize) = (r.start().into(), r.end().into());
-            source.get(a - base..b - base).map(String::from)
-        };
         for idiom in &found {
             let Some(at) = script.source_range(idiom.start, idiom.end) else {
                 continue;

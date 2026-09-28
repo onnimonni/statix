@@ -14,7 +14,7 @@ source: bin/tests/shell_idiom.rs
       "name": "shell_idiom",
       "note": "Shell commands with a shorter idiom",
       "code": 33,
-      "severity": "Warn",
+      "severity": "Hint",
       "diagnostics": [
         {
           "at": {
@@ -27,21 +27,10 @@ source: bin/tests/shell_idiom.rs
               "column": 26
             }
           },
-          "message": "`cp` + `chgrp` + `chmod` can be one `install`: `install -m 750 -g x ${cfg.package}/bin/helper /run/x/helper`",
-          "suggestion": {
-            "at": {
-              "from": {
-                "line": 1,
-                "column": 33
-              },
-              "to": {
-                "line": 5,
-                "column": 3
-              }
-            },
-            "fix": "''\n  install -m 750 -g x ${cfg.package}/bin/helper /run/x/helper\n''"
-          },
-          "fixable": true
+          "message": "`cp` + `chgrp` + `chmod` can be one `install`",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Use `install -m 750 -g x ${cfg.package}/bin/helper /run/x/helper`."
         }
       ]
     }

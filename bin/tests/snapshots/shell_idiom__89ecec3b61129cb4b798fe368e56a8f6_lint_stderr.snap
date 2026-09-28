@@ -1,0 +1,29 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+{ enterShell = ''
+  cp "x; echo INJECTED" d/; chmod 755 "d/x; echo INJECTED"
+  cat input | > output sort
+  v=$(cat Cargo.*)
+  mkdir -p foo; install -Dm644 src foobar/file
+  mkdir -p a; mkdir -p */b
+  mkdir -p blocked/child && mkdir -p later
+  grep() { echo custom; }; egrep workspace Cargo.toml
+  sh -c 'v=$(cat file)'
+''; }
+---
+[shellcheck] Warning: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:4:3 ]
+   │
+ 4 │   v=$(cat Cargo.*)
+   │   ┬  
+   │   ╰── SC2034: v appears unused. Verify use (or export if used externally).
+   │ 
+ 6 │   mkdir -p a; mkdir -p */b
+   │                        ┬  
+   │                        ╰── SC2035: Use ./*glob* or -- *glob* so names with dashes won't become options.
+   │ 
+ 8 │   grep() { echo custom; }; egrep workspace Cargo.toml
+   │                            ──┬──  
+   │                              ╰──── SC2196: egrep is non-standard and deprecated. Use grep -E instead.
+───╯

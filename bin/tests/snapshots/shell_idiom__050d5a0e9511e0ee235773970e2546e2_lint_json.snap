@@ -63,7 +63,7 @@ stdenv.mkDerivation { installPhase = ''
       "name": "shell_idiom",
       "note": "Shell commands with a shorter idiom",
       "code": 33,
-      "severity": "Warn",
+      "severity": "Hint",
       "diagnostics": [
         {
           "at": {
@@ -77,20 +77,9 @@ stdenv.mkDerivation { installPhase = ''
             }
           },
           "message": "The phase doesn't run `runHook preInstall`",
-          "suggestion": {
-            "at": {
-              "from": {
-                "line": 1,
-                "column": 38
-              },
-              "to": {
-                "line": 4,
-                "column": 3
-              }
-            },
-            "fix": "''\n  runHook preInstall\n  cp -r dist $out\n  chmod 755 $out\n  runHook postInstall\n''"
-          },
-          "fixable": true
+          "suggestion": null,
+          "fixable": false,
+          "help": "Use `runHook preInstall`. Overriding a phase skips its hooks unless it runs them: `preInstall`/`postInstall` from the derivation and from setup hooks. Leave them out only on purpose."
         },
         {
           "at": {
@@ -105,7 +94,8 @@ stdenv.mkDerivation { installPhase = ''
           },
           "message": "The phase doesn't run `runHook postInstall`",
           "suggestion": null,
-          "fixable": true
+          "fixable": false,
+          "help": "Use `runHook postInstall`. Overriding a phase skips its hooks unless it runs them: `preInstall`/`postInstall` from the derivation and from setup hooks. Leave them out only on purpose."
         }
       ]
     }

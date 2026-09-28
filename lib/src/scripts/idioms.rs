@@ -69,10 +69,9 @@ pub struct Context {
 /// Idioms in `commands` of the script `text` running in `ctx`.
 #[must_use]
 pub fn idioms_in(text: &str, commands: &Commands, ctx: Context) -> Vec<Idiom> {
-    let gnu = ctx.gnu;
     let mut out = Vec::new();
     for stages in &commands.pipelines {
-        out.extend(useless_cat(text, stages));
+        out.extend(useless_cat(text, stages, &commands.defined));
         out.extend(tee_to_null(text, stages));
         out.extend(pipe_idioms(stages));
     }
@@ -81,7 +80,9 @@ pub fn idioms_in(text: &str, commands: &Commands, ctx: Context) -> Vec<Idiom> {
         out.extend(more_simple_idioms(text, c, ctx));
     }
     for u in &commands.uses {
-        out.extend(renamed_command(text, u));
+        if !commands.defined.contains("grep") {
+            out.extend(renamed_command(text, u));
+        }
     }
     for &(start, end) in &commands.ls_loops {
         out.extend(ls_loop(text, start, end));
@@ -95,7 +96,7 @@ pub fn idioms_in(text: &str, commands: &Commands, ctx: Context) -> Vec<Idiom> {
         while i < seq.len() {
             // `mkdir -p d` just before: `d` is a directory
             let prior_dir = i.checked_sub(1).and_then(|p| mkdir_p(text, &seq[p]));
-            match install(text, &seq[i..], gnu, prior_dir.as_deref()) {
+            match install(text, &seq[i..], ctx, prior_dir.as_deref()) {
                 Some((idiom, used)) => {
                     out.push(idiom);
                     i += used;
@@ -486,7 +487,10 @@ fn sequence_idioms(text: &str, seq: &[Simple], ctx: Context) -> Vec<Idiom> {
             && ctx.gnu
             && let Some(target) = creates_parent(text, second)
             && key(target).trim_end_matches('/') != dir.trim_end_matches('/')
-            && parent(&key(target)).starts_with(dir.trim_end_matches('/'))
+            && {
+                let (p, d) = (parent(&key(target)).to_string(), dir.trim_end_matches('/'));
+                p == d || p.starts_with(&format!("{d}/"))
+            }
             // nothing else uses the directory
             && !seq[i + 2..].iter().any(|c| text.get(c.start()..c.end()).is_some_and(|t| t.contains(dir.as_str())))
             && only_separators(text, &seq[i..i + 2])
@@ -506,13 +510,20 @@ fn sequence_idioms(text: &str, seq: &[Simple], ctx: Context) -> Vec<Idiom> {
             continue;
         }
         // `mkdir -p a; mkdir -p b`: `mkdir -p a b`
-        if mkdir.is_some()
-            && mkdir_p(text, second).is_some()
-            && only_separators(text, &seq[i..i + 2])
-        {
+        // static paths only (globs expand before the first one exists), and
+        // not `&&` (the second shouldn't run when the first fails)
+        let mergeable = |c: &Simple| {
+            mkdir_p(text, c).is_some()
+                && !c.after_and
+                && c.words.get(2).is_some_and(|w| {
+                    w.0.as_deref()
+                        .is_some_and(|t| !t.contains(['*', '?', '[', '{']))
+                })
+        };
+        if mergeable(first) && mergeable(second) && only_separators(text, &seq[i..i + 2]) {
             let mut j = i + 1;
             while j + 1 < seq.len()
-                && mkdir_p(text, &seq[j + 1]).is_some()
+                && mergeable(&seq[j + 1])
                 && only_separators(text, &seq[j..j + 2])
             {
                 j += 1;
@@ -553,8 +564,8 @@ fn sequence_idioms(text: &str, seq: &[Simple], ctx: Context) -> Vec<Idiom> {
                     Piece::Word(second.words[3].1, second.words[3].2),
                 ],
                 message: "`rm -f` then `ln -s`: `ln -sfn` replaces the link".into(),
-                note: None,
-                exact: true,
+                note: Some("Unlike `rm -f`, `ln -sfn` doesn't fail when the target is a directory: it links inside it."),
+                exact: false,
             });
             i += 2;
             continue;
@@ -626,6 +637,7 @@ fn pushd_popd(seq: &[Simple]) -> Vec<Idiom> {
 
 /// `$(cat f)`, `substituteInPlace --replace`, `installBin`,
 /// `--prefix PATH : ${x}/bin`, `HOME=$(mktemp -d)`, `grep | head -1`.
+#[allow(clippy::too_many_lines)]
 fn more_simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
     let raw = |k: usize| c.words.get(k).and_then(|w| text.get(w.1..w.2));
     let n = c.words.len();
@@ -635,7 +647,12 @@ fn more_simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
             let before = text.get(..c.start())?;
             let after = text.get(c.end()..)?;
             let file = raw(1)?;
-            if !before.ends_with("$(") || !after.starts_with(')') || file.starts_with('-') {
+            // one file: `$(<a*)` fails when a glob matches several
+            if !before.ends_with("$(")
+                || !after.starts_with(')')
+                || file.starts_with('-')
+                || c.word(1).is_none_or(|w| w.contains(['*', '?', '[']))
+            {
                 return None;
             }
             Some(Idiom {
@@ -819,7 +836,40 @@ fn can_reorder(text: &str, a: (usize, usize), b: (usize, usize)) -> bool {
 }
 
 /// `cat FILE | cmd` is `cmd < FILE`.
-fn useless_cat(text: &str, stages: &[Simple]) -> Option<Idiom> {
+/// Programs that behave the same reading a file on stdin as from a pipe
+/// (external: no shell state to lose by leaving the pipeline's subshell).
+const STDIN_FILTERS: &[&str] = &[
+    "grep",
+    "sed",
+    "awk",
+    "gawk",
+    "jq",
+    "yq",
+    "sort",
+    "uniq",
+    "head",
+    "tail",
+    "wc",
+    "tr",
+    "cut",
+    "xz",
+    "gzip",
+    "gunzip",
+    "bzip2",
+    "zstd",
+    "base64",
+    "sha256sum",
+    "md5sum",
+    "cpio",
+    "tar",
+    "nixfmt",
+];
+
+fn useless_cat(
+    text: &str,
+    stages: &[Simple],
+    defined: &std::collections::HashSet<String>,
+) -> Option<Idiom> {
     let [cat, next, ..] = stages else { return None };
     let file = match (cat.word(0), cat.words.as_slice()) {
         (Some("cat"), [_, (_, s, e)]) => (*s, *e),
@@ -850,13 +900,21 @@ fn useless_cat(text: &str, stages: &[Simple]) -> Option<Idiom> {
             next.word(0).map_or("the command", basename)
         ),
         note: None,
-        exact: can_reorder(text, file, next.span),
+        // builtins (`read`) would leave the pipeline's subshell
+        exact: can_reorder(text, file, next.span)
+            && next
+                .word(0)
+                .is_some_and(|w| STDIN_FILTERS.contains(&basename(w)) && !defined.contains(w)),
     })
 }
 
 /// `echo X | tee FILE > /dev/null` is `echo X > FILE` (`tee -a`: `>>`).
 fn tee_to_null(text: &str, stages: &[Simple]) -> Option<Idiom> {
     let [echo, tee] = stages else { return None };
+    // `printf -v` sets a variable
+    if echo.word(1) == Some("-v") {
+        return None;
+    }
     if !matches!(echo.word(0), Some("echo" | "printf")) || !echo.redirects.is_empty() || echo.other
     {
         return None;
@@ -1022,6 +1080,31 @@ fn only_separators(text: &str, cmds: &[Simple]) -> bool {
     })
 }
 
+/// Whether `chmod`/`chown` of the destination provably means the copied
+/// file, not an existing directory `cp` copied into: the file is named
+/// after a plain source name, or it's in a fresh `$out` directory the
+/// sequence just created.
+fn provably_file(
+    ctx: Context,
+    dst: &str,
+    into_dir: bool,
+    srcs: &[&str],
+    mkdir: Option<&str>,
+) -> bool {
+    let plain = |w: &str| {
+        !w.is_empty()
+            && w.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+    };
+    if into_dir {
+        return srcs.len() == 1 && plain(basename(&key(srcs[0]))) && !srcs[0].contains(['"', '\'']);
+    }
+    let dst = dst.trim_end_matches('/');
+    ctx.build
+        && (dst.starts_with("$out/") || dst.starts_with("${out}/"))
+        && mkdir.is_some_and(|d| parent(dst) == d.trim_end_matches('/'))
+}
+
 fn basename(path: &str) -> &str {
     path.trim_end_matches('/')
         .rsplit('/')
@@ -1035,9 +1118,10 @@ fn basename(path: &str) -> &str {
 fn install(
     text: &str,
     seq: &[Simple],
-    gnu: bool,
+    ctx: Context,
     prior_dir: Option<&str>,
 ) -> Option<(Idiom, usize)> {
+    let gnu = ctx.gnu;
     let mut i = 0;
     let mkdir = seq.first().and_then(|c| mkdir_p(text, c));
     if mkdir.is_some() {
@@ -1168,6 +1252,17 @@ fn install(
         pieces.push(word(cp, n - 1)?);
         // one file into a directory: name it, so `-D` creates the directory
         if into_dir && srcs.len() == 1 {
+            // only plain names: `"x; y"` would turn into shell syntax
+            let unquoted = key(srcs[0]);
+            let name = basename(&unquoted);
+            if name.is_empty()
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+                || srcs[0].contains(['"', '\''])
+            {
+                return None;
+            }
             // `'/etc/x/'name` is fine shell
             let sep = if dst.ends_with('/') { "" } else { "/" };
             pieces.push(Piece::Text(format!("{sep}{}", basename(&key(srcs[0])))));
@@ -1187,7 +1282,11 @@ fn install(
                 ),
                 _ => None,
             },
-            exact: mode.is_some() && !symbolic && !reordered && only_separators(text, commands),
+            exact: mode.is_some()
+                && !symbolic
+                && !reordered
+                && only_separators(text, commands)
+                && provably_file(ctx, &dst, into_dir, srcs, mkdir.as_deref()),
         },
         i,
     ))
@@ -1334,6 +1433,11 @@ mod tests {
                 "mkdir -p $out/bin\ncp foo $out/bin/foo\nchmod 755 $out/bin/foo\n",
                 true
             ),
+            // outside a build `$out/bin/foo` could be an existing directory
+            [(s("install -Dm755 foo $out/bin/foo"), false)]
+        );
+        assert_eq!(
+            suggest_build("mkdir -p $out/bin\ncp foo $out/bin/foo\nchmod 755 $out/bin/foo\n"),
             [(s("install -Dm755 foo $out/bin/foo"), true)]
         );
         assert_eq!(
@@ -1358,13 +1462,13 @@ mod tests {
             ),
             [(
                 s("install -m 755 -o root -g wheel app /usr/local/bin/app"),
-                true
+                false
             )]
         );
         // BSD install has no -D: mkdir stays
         assert_eq!(
             suggest("mkdir -p d\ncp x d/x\nchmod 644 d/x\n", false),
-            [(s("mkdir -p d && install -m 644 x d/x"), true)]
+            [(s("mkdir -p d && install -m 644 x d/x"), false)]
         );
         // a comment in between isn't lost by a fix
         assert_eq!(

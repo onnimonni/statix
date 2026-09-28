@@ -8,5 +8,5 @@ stdenv.mkDerivation { installPhase = ''
 ---
 <temp_file_path>>2:14:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
 <temp_file_path>>3:13:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
-<temp_file_path>>2:3:W:33:[shell_idiom] The phase doesn't run `runHook preInstall`
-<temp_file_path>>3:17:W:33:[shell_idiom] The phase doesn't run `runHook postInstall`
+<temp_file_path>>2:3:I:33:[shell_idiom] The phase doesn't run `runHook preInstall`
+<temp_file_path>>3:17:I:33:[shell_idiom] The phase doesn't run `runHook postInstall`

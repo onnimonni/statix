@@ -104,7 +104,7 @@ stdenv.mkDerivation { installPhase = ''
                 "column": 3
               }
             },
-            "fix": "''\n  runHook preInstall\n  install -Dm755 tool $out/bin/tool\n  runHook postInstall\n''"
+            "fix": "''\n  install -Dm755 tool $out/bin/tool\n''"
           },
           "fixable": true
         },
@@ -121,7 +121,8 @@ stdenv.mkDerivation { installPhase = ''
           },
           "message": "The phase doesn't run `runHook preInstall`",
           "suggestion": null,
-          "fixable": true
+          "fixable": false,
+          "help": "Use `runHook preInstall`. Overriding a phase skips its hooks unless it runs them: `preInstall`/`postInstall` from the derivation and from setup hooks. Leave them out only on purpose."
         },
         {
           "at": {
@@ -136,7 +137,8 @@ stdenv.mkDerivation { installPhase = ''
           },
           "message": "The phase doesn't run `runHook postInstall`",
           "suggestion": null,
-          "fixable": true
+          "fixable": false,
+          "help": "Use `runHook postInstall`. Overriding a phase skips its hooks unless it runs them: `preInstall`/`postInstall` from the derivation and from setup hooks. Leave them out only on purpose."
         }
       ]
     }

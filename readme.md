@@ -204,7 +204,9 @@ in
       ''
     );
     files = "\\.(nix|sh|bash|py)$";
-    # the hook gets the staged files; don't run batches of them in parallel
+    # pass the staged files (git-hooks.nix's statix hook defaults to the
+    # whole repository), and don't run batches of them in parallel
+    pass_filenames = true;
     require_serial = true;
   };
 }

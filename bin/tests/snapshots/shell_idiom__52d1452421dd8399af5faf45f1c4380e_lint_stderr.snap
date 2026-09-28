@@ -1,0 +1,17 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  runHook preInstall
+  set -euo pipefail
+  make install
+  runHook postInstall
+''; }
+---
+[shell_idiom] Advice: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:3:3 ]
+   │
+ 3 │   set -euo pipefail
+   │   ────────┬────────  
+   │           ╰────────── stdenv phases already run with set -eu -o pipefail
+───╯

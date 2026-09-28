@@ -1,0 +1,8 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+{ shellHook = ''
+  export HOME=$(mktemp -d)
+''; }
+---
+<temp_file_path>>2:10:W:28:[shellcheck] SC2155: Declare and assign separately to avoid masking return values.

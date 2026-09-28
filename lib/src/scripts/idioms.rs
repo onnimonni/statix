@@ -185,10 +185,31 @@ fn pipe_idioms(stages: &[Simple]) -> Option<Idiom> {
     let start = a.start();
     let end = b.span.1;
     match (words(a).as_slice(), words(b).as_slice()) {
+        // one input (stdin or one file): `grep -c` counts per file
         ([Some("grep"), args @ ..], [Some("wc"), Some("-l")])
-            if !args
+            if args
                 .iter()
-                .any(|w| matches!(w, Some("-c" | "-o" | "--count" | "--only-matching"))) =>
+                .all(|w| w.is_some_and(|t| !t.contains(['*', '?', '['])))
+                && args
+                    .iter()
+                    .filter(|w| !w.is_some_and(|t| t.starts_with('-')))
+                    .count()
+                    <= 2
+                && !args.iter().any(|w| {
+                    matches!(
+                        w,
+                        Some(
+                            "-c" | "-o"
+                                | "--count"
+                                | "--only-matching"
+                                | "-r"
+                                | "-R"
+                                | "--recursive"
+                                | "-e"
+                                | "-f"
+                        )
+                    )
+                }) =>
         {
             let mut r = pieces([Piece::Text("grep -c".into())]);
             r.extend(rest(a, 1));
@@ -216,7 +237,12 @@ fn pipe_idioms(stages: &[Simple]) -> Option<Idiom> {
                 exact: false,
             })
         }
-        ([Some("sort"), ..], [Some("uniq")]) => {
+        // `sort -k2 | uniq`: `-u` would dedup by key
+        ([Some("sort"), sort_args @ ..], [Some("uniq")])
+            if sort_args
+                .iter()
+                .all(|w| w.is_some_and(|t| !t.starts_with('-') || t == "-r")) =>
+        {
             let mut r = pieces([Piece::Text("sort -u".into())]);
             r.extend(rest(a, 1));
             Some(Idiom {
@@ -328,6 +354,10 @@ fn simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
         // `sed -i 's/a/b/g' f` in a build: `substituteInPlace`
         "sed" if ctx.build && n == 4 && word(1) == Some("-i") => {
             let script = word(2)?;
+            // `${...}` in the text: shown as the placeholder otherwise
+            if script.contains(PLACEHOLDER) {
+                return None;
+            }
             // `s/a/b/`, `s|a|b|`, `s#a#b#g`
             let body = script.strip_prefix('s')?;
             let delim = body
@@ -515,9 +545,10 @@ fn sequence_idioms(text: &str, seq: &[Simple], ctx: Context) -> Vec<Idiom> {
         let mergeable = |c: &Simple| {
             mkdir_p(text, c).is_some()
                 && !c.after_and
+                // `$out/a` is fine; globs and braces expand
                 && c.words.get(2).is_some_and(|w| {
-                    w.0.as_deref()
-                        .is_some_and(|t| !t.contains(['*', '?', '[', '{']))
+                    text.get(w.1..w.2)
+                        .is_some_and(|t| !t.contains(['*', '?', '[', '{']) || t.starts_with("${") && !t[2..].contains(['*', '?', '[']))
                 })
         };
         if mergeable(first) && mergeable(second) && only_separators(text, &seq[i..i + 2]) {
@@ -573,9 +604,16 @@ fn sequence_idioms(text: &str, seq: &[Simple], ctx: Context) -> Vec<Idiom> {
         i += 1;
     }
     // `set -e` / `set -euo pipefail` first in a stdenv phase
+    // first, or right after `runHook preInstall`
+    let set_at = match seq.first() {
+        Some(c) if c.word(0) == Some("runHook") => seq.get(1),
+        c => c,
+    };
     if ctx.phase
-        && let Some(first) = seq.first().or(None)
-        && first.start() == text.len() - text.trim_start().len()
+        && let Some(first) = set_at
+        && seq
+            .first()
+            .is_some_and(|c| c.start() == text.len() - text.trim_start().len())
         && first.word(0) == Some("set")
         && first.words[1..].iter().all(|w| {
             matches!(
@@ -636,7 +674,7 @@ fn pushd_popd(seq: &[Simple]) -> Vec<Idiom> {
 }
 
 /// `$(cat f)`, `substituteInPlace --replace`, `installBin`,
-/// `--prefix PATH : ${x}/bin`, `HOME=$(mktemp -d)`, `grep | head -1`.
+/// `--prefix PATH : ${x}/bin`.
 #[allow(clippy::too_many_lines)]
 fn more_simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
     let raw = |k: usize| c.words.get(k).and_then(|w| text.get(w.1..w.2));
@@ -651,7 +689,7 @@ fn more_simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
             if !before.ends_with("$(")
                 || !after.starts_with(')')
                 || file.starts_with('-')
-                || c.word(1).is_none_or(|w| w.contains(['*', '?', '[']))
+                || !one_word(c.word(1), file)
             {
                 return None;
             }
@@ -731,23 +769,6 @@ fn more_simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
             ))
         }
         // `export HOME=$(mktemp -d)`: `$TMPDIR`
-        "export" if ctx.build && n == 2 => {
-            let w = raw(1)?;
-            if !matches!(w, "HOME=$(mktemp -d)" | "HOME=\"$(mktemp -d)\"") {
-                return None;
-            }
-            Some(Idiom {
-                start: c.start(),
-                end: c.end(),
-                replacement: vec![Piece::Text("export HOME=$TMPDIR".into())],
-                message: "A fresh `HOME` in a build: `$TMPDIR` is already one".into(),
-                note: Some(
-                    "Every build has its own `$TMPDIR`; keep `mktemp -d` if the build needs `HOME` empty and apart from the sources.",
-                ),
-                exact: false,
-            })
-        }
-        // `cp -r x d` + later `chmod -R u+w d`: `--no-preserve=mode`
         _ => None,
     }
 }
@@ -828,6 +849,15 @@ fn guarded(seq: &[Simple]) -> Vec<Idiom> {
     out
 }
 
+/// Whether a word is exactly one word after expansion: static without glob
+/// characters, or double quoted (`"$f"`). `$files` may be none or several.
+fn one_word(text: Option<&str>, raw: &str) -> bool {
+    match text {
+        Some(t) => !t.contains(['*', '?', '[']),
+        None => raw.starts_with('"') && raw.ends_with('"') && !raw.contains(['*', '?', '[']),
+    }
+}
+
 /// Whether words in `text[a..b]` and `text[c..d]` can swap places in a fix:
 /// `${...}` placeholders are put back in order, so not when both have one.
 fn can_reorder(text: &str, a: (usize, usize), b: (usize, usize)) -> bool {
@@ -901,7 +931,9 @@ fn useless_cat(
         ),
         note: None,
         // builtins (`read`) would leave the pipeline's subshell
+        // `< $files` is an ambiguous redirect unless it's one word
         exact: can_reorder(text, file, next.span)
+            && one_word(cat.word(1), raw)
             && next
                 .word(0)
                 .is_some_and(|w| STDIN_FILTERS.contains(&basename(w)) && !defined.contains(w)),

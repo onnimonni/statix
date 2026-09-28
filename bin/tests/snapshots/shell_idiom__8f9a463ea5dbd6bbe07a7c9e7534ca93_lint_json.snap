@@ -1,0 +1,47 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+{ shellHook = ''
+  export HOME=$(mktemp -d)
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 10
+            },
+            "to": {
+              "line": 2,
+              "column": 14
+            }
+          },
+          "message": "SC2155: Declare and assign separately to avoid masking return values.",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 15
+              },
+              "to": {
+                "line": 3,
+                "column": 3
+              }
+            },
+            "fix": "''\n  export HOME\n  HOME=$(mktemp -d)\n''"
+          },
+          "fixable": true
+        }
+      ]
+    }
+  ]
+}

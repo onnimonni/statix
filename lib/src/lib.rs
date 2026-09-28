@@ -334,6 +334,11 @@ impl Serialize for Suggestion {
 /// look at the `lint` attribute macro instead for implementing rules
 pub trait Rule {
     fn validate(&self, node: &SyntaxElement) -> Option<Report>;
+    /// Several reports for one node (e.g. warnings and hints apart, as
+    /// severity is per report).
+    fn validate_all(&self, node: &SyntaxElement) -> Vec<Report> {
+        self.validate(node).into_iter().collect()
+    }
 }
 
 /// Contains information about the lint itself. Do not implement manually,

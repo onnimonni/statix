@@ -20,7 +20,7 @@ fn collect_fixes(source: &str, lints: &LintMap) -> Result<Vec<Report>, ParseErro
             WalkEvent::Enter(child) => lints.get(&child.kind()).map(|rules| {
                 rules
                     .iter()
-                    .filter_map(|rule| rule.validate(&child))
+                    .flat_map(|rule| rule.validate_all(&child))
                     .filter(|report| report.total_suggestion_range().is_some())
                     .collect::<Vec<_>>()
             }),

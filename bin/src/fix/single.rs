@@ -41,7 +41,7 @@ fn find(offset: TextSize, src: &str) -> Result<Report, SingleFixErr> {
             WalkEvent::Enter(child) => lints.get(&child.kind()).map(|rules| {
                 rules
                     .iter()
-                    .filter_map(|rule| rule.validate(&child))
+                    .flat_map(|rule| rule.validate_all(&child))
                     .find(|report| report.total_suggestion_range().is_some())
             }),
             WalkEvent::Leave(_) => None,

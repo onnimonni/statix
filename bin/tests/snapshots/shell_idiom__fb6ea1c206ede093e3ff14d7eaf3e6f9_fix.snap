@@ -1,0 +1,8 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+drv.overrideAttrs (old: { installPhase = ''
+  ${old.installPhase}
+  echo more
+''; passthru.tests.x = { buildPhase = "make"; }; })
+---

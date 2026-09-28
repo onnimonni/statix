@@ -28,8 +28,9 @@ stdenv.mkDerivation { installPhase = ''
  4 │ ├─▶   chmod 755 $out/bin/tool
    │ │                               
    │ ╰─────────────────────────────── mkdir -p + cp + chmod can be one install: install -Dm755 tool $out/bin/tool
-   │
-   ├─[ <temp_file_path>:2:3 ]
+───╯
+[shell_idiom] Advice: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:2:3 ]
    │
  2 │   mkdir -p $out/bin
    │   │ 

@@ -1,0 +1,28 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  cat $files | sort > all
+  n=$(grep pat lib/*.php | wc -l)
+  sort -k2 x | uniq
+  mkdir -p $out/a
+  mkdir -p $out/b
+  v=$(cat "$f")
+  sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x
+''; }
+---
+--- <temp_file_path>
++++ <temp_file_path> [fixed]
+@@ -1,9 +1,8 @@
+ stdenv.mkDerivation { installPhase = ''
+-  cat $files | sort > all
++  sort > all < "$files"
+   n=$(grep pat lib/*.php | wc -l)
+   sort -k2 x | uniq
+-  mkdir -p $out/a
+-  mkdir -p $out/b
+-  v=$(cat "$f")
++  mkdir -p "$out"/a "$out"/b
++  v=$(<"$f")
+   sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x
+ ''; }

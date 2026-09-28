@@ -1,0 +1,22 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  cat $files | sort > all
+  n=$(grep pat lib/*.php | wc -l)
+  sort -k2 x | uniq
+  mkdir -p $out/a
+  mkdir -p $out/b
+  v=$(cat "$f")
+  sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x
+''; }
+---
+<temp_file_path>>2:7:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>3:7:I:28:[shellcheck] SC2126: Consider using 'grep -c' instead of 'grep|wc -l'.
+<temp_file_path>>5:12:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>6:12:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>5:3:W:33:[shell_idiom] `mkdir -p` takes several directories: `mkdir -p $out/a $out/b`
+<temp_file_path>>7:7:W:33:[shell_idiom] `$(cat file)`: bash reads it without `cat` as `$(<file)`
+<temp_file_path>>2:3:I:33:[shell_idiom] `cat` only feeds `sort`: read the file directly
+<temp_file_path>>2:3:I:33:[shell_idiom] The phase doesn't run `runHook preInstall`
+<temp_file_path>>8:54:I:33:[shell_idiom] The phase doesn't run `runHook postInstall`

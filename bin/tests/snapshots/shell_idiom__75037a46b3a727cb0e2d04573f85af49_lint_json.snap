@@ -2,9 +2,13 @@
 source: bin/tests/shell_idiom.rs
 ---
 stdenv.mkDerivation { installPhase = ''
-  mkdir -p $out/bin
-  cp tool $out/bin/tool
-  chmod 755 $out/bin/tool
+  cat $files | sort > all
+  n=$(grep pat lib/*.php | wc -l)
+  sort -k2 x | uniq
+  mkdir -p $out/a
+  mkdir -p $out/b
+  v=$(cat "$f")
+  sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x
 ''; }
 ---
 {
@@ -20,11 +24,11 @@ stdenv.mkDerivation { installPhase = ''
           "at": {
             "from": {
               "line": 2,
-              "column": 12
+              "column": 7
             },
             "to": {
               "line": 2,
-              "column": 16
+              "column": 13
             }
           },
           "message": "SC2086: Double quote to prevent globbing and word splitting.",
@@ -35,11 +39,11 @@ stdenv.mkDerivation { installPhase = ''
                 "column": 38
               },
               "to": {
-                "line": 5,
+                "line": 9,
                 "column": 3
               }
             },
-            "fix": "''\n  mkdir -p \"$out\"/bin\n  cp tool \"$out\"/bin/tool\n  chmod 755 \"$out\"/bin/tool\n''"
+            "fix": "''\n  cat \"$files\" | sort > all\n  n=$(grep pat lib/*.php | wc -l)\n  sort -k2 x | uniq\n  mkdir -p \"$out\"/a\n  mkdir -p \"$out\"/b\n  v=$(cat \"$f\")\n  sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x\n''"
           },
           "fixable": true
         },
@@ -47,11 +51,27 @@ stdenv.mkDerivation { installPhase = ''
           "at": {
             "from": {
               "line": 3,
-              "column": 11
+              "column": 7
             },
             "to": {
               "line": 3,
-              "column": 15
+              "column": 25
+            }
+          },
+          "message": "SC2126: Consider using 'grep -c' instead of 'grep|wc -l'.",
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://www.shellcheck.net/wiki/SC2126"
+        },
+        {
+          "at": {
+            "from": {
+              "line": 5,
+              "column": 12
+            },
+            "to": {
+              "line": 5,
+              "column": 16
             }
           },
           "message": "SC2086: Double quote to prevent globbing and word splitting.",
@@ -61,12 +81,12 @@ stdenv.mkDerivation { installPhase = ''
         {
           "at": {
             "from": {
-              "line": 4,
-              "column": 13
+              "line": 6,
+              "column": 12
             },
             "to": {
-              "line": 4,
-              "column": 17
+              "line": 6,
+              "column": 16
             }
           },
           "message": "SC2086: Double quote to prevent globbing and word splitting.",
@@ -84,15 +104,15 @@ stdenv.mkDerivation { installPhase = ''
         {
           "at": {
             "from": {
-              "line": 2,
+              "line": 5,
               "column": 3
             },
             "to": {
-              "line": 4,
-              "column": 26
+              "line": 6,
+              "column": 18
             }
           },
-          "message": "`mkdir -p` + `cp` + `chmod` can be one `install`: `install -Dm755 tool $out/bin/tool`",
+          "message": "`mkdir -p` takes several directories: `mkdir -p $out/a $out/b`",
           "suggestion": {
             "at": {
               "from": {
@@ -100,12 +120,27 @@ stdenv.mkDerivation { installPhase = ''
                 "column": 38
               },
               "to": {
-                "line": 5,
+                "line": 9,
                 "column": 3
               }
             },
-            "fix": "''\n  install -Dm755 tool $out/bin/tool\n''"
+            "fix": "''\n  cat $files | sort > all\n  n=$(grep pat lib/*.php | wc -l)\n  sort -k2 x | uniq\n  mkdir -p $out/a $out/b\n  v=$(<\"$f\")\n  sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x\n''"
           },
+          "fixable": true
+        },
+        {
+          "at": {
+            "from": {
+              "line": 7,
+              "column": 7
+            },
+            "to": {
+              "line": 7,
+              "column": 15
+            }
+          },
+          "message": "`$(cat file)`: bash reads it without `cat` as `$(<file)`",
+          "suggestion": null,
           "fixable": true
         }
       ]
@@ -116,6 +151,22 @@ stdenv.mkDerivation { installPhase = ''
       "code": 33,
       "severity": "Hint",
       "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 26
+            }
+          },
+          "message": "`cat` only feeds `sort`: read the file directly",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Use `sort > all < $files`."
+        },
         {
           "at": {
             "from": {
@@ -135,12 +186,12 @@ stdenv.mkDerivation { installPhase = ''
         {
           "at": {
             "from": {
-              "line": 4,
-              "column": 26
+              "line": 8,
+              "column": 54
             },
             "to": {
-              "line": 4,
-              "column": 26
+              "line": 8,
+              "column": 54
             }
           },
           "message": "The phase doesn't run `runHook postInstall`",

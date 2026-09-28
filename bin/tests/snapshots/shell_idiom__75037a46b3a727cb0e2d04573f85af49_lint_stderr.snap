@@ -1,0 +1,54 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  cat $files | sort > all
+  n=$(grep pat lib/*.php | wc -l)
+  sort -k2 x | uniq
+  mkdir -p $out/a
+  mkdir -p $out/b
+  v=$(cat "$f")
+  sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x
+''; }
+---
+[shellcheck] Advice: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:2:7 ]
+   │
+ 2 │   cat $files | sort > all
+   │       ───┬──  
+   │          ╰──── SC2086: Double quote to prevent globbing and word splitting.
+ 3 │   n=$(grep pat lib/*.php | wc -l)
+   │       ─────────┬────────  
+   │                ╰────────── SC2126: Consider using 'grep -c' instead of 'grep|wc -l'.
+   │ 
+ 5 │   mkdir -p $out/a
+   │            ──┬─  
+   │              ╰─── SC2086: Double quote to prevent globbing and word splitting.
+ 6 │   mkdir -p $out/b
+   │            ──┬─  
+   │              ╰─── SC2086: Double quote to prevent globbing and word splitting.
+───╯
+[shell_idiom] Warning: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:5:3 ]
+   │
+ 5 │ ╭─▶   mkdir -p $out/a
+ 6 │ ├─▶   mkdir -p $out/b
+   │ │                       
+   │ ╰─────────────────────── mkdir -p takes several directories: mkdir -p $out/a $out/b
+ 7 │       v=$(cat "$f")
+   │           ────┬───  
+   │               ╰───── $(cat file): bash reads it without cat as $(<file)
+───╯
+[shell_idiom] Advice: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   cat $files | sort > all
+   │   ┬──────────┬───────────  
+   │   ╰──────────────────────── The phase doesn't run runHook preInstall
+   │              │             
+   │              ╰───────────── cat only feeds sort: read the file directly
+   │ 
+ 8 │   sed -i 's,#!/usr/bin/env bash,#!${stdenv.shell},' x
+   │                                                      │ 
+   │                                                      ╰─ The phase doesn't run runHook postInstall
+───╯

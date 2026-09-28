@@ -1,0 +1,39 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  runHook preInstall
+  set -euo pipefail
+  make install
+  runHook postInstall
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shell_idiom",
+      "note": "Shell commands with a shorter idiom",
+      "code": 33,
+      "severity": "Hint",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 3,
+              "column": 3
+            },
+            "to": {
+              "line": 3,
+              "column": 20
+            }
+          },
+          "message": "stdenv phases already run with `set -eu -o pipefail`",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Remove the line."
+        }
+      ]
+    }
+  ]
+}

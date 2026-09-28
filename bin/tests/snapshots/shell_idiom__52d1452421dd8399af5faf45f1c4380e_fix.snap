@@ -1,0 +1,10 @@
+---
+source: bin/tests/shell_idiom.rs
+---
+stdenv.mkDerivation { installPhase = ''
+  runHook preInstall
+  set -euo pipefail
+  make install
+  runHook postInstall
+''; }
+---

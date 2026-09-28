@@ -66,6 +66,10 @@ const PHASES: &[(&str, &str)] = &[
 /// The stdenv phase `s` is the body of: `installPhase = ''...''`.
 fn phase_of(s: &ast::Str) -> Option<&'static str> {
     let apv = AttrpathValue::cast(s.syntax().parent()?)?;
+    // `passthru.tests.buildPhase`: not the derivation's phase
+    if utils::enclosing_attrpath(apv.syntax()).is_some_and(|p| p.iter().any(|k| k == "passthru")) {
+        return None;
+    }
     let key = apv.attrpath()?.attrs().last()?;
     let name = utils::attr_name(&key)?;
     PHASES
@@ -97,7 +101,13 @@ fn context(s: &ast::Str, kind: Kind, shell: &str) -> idioms::Context {
     });
     let linux = declared::file_platforms(node)
         .is_some_and(|c| c == declared::Cond::Platform("linux".into()));
-    let build = kind == Kind::Hook || run_command;
+    // `shellHook` runs in a shell, not a build
+    let shell_hook = node
+        .parent()
+        .and_then(AttrpathValue::cast)
+        .and_then(|apv| utils::attr_name(&apv.attrpath()?.attrs().last()?))
+        .is_some_and(|k| k == "shellHook");
+    let build = (kind == Kind::Hook && !shell_hook) || run_command;
     idioms::Context {
         gnu: build || devenv || linux,
         build,
@@ -170,6 +180,13 @@ fn missing_run_hooks(
         return Vec::new();
     };
     let body = text.trim();
+    // `${old.installPhase} ...`: the interpolated phase runs the hooks
+    let interpolates_phase = s.normalized_parts().iter().any(|p| {
+        matches!(p, ast::InterpolPart::Interpolation(i) if i.syntax().text().to_string().contains("Phase"))
+    });
+    if interpolates_phase {
+        return Vec::new();
+    }
     // `installPhase = "true";`, `":"`: nothing to wrap
     if body.is_empty() || matches!(body, "true" | ":") {
         return Vec::new();
@@ -213,13 +230,21 @@ fn missing_run_hooks(
 
 impl Rule for ShellIdiom {
     fn validate(&self, node: &SyntaxElement) -> Option<Report> {
+        self.validate_all(node).into_iter().next()
+    }
+
+    /// Warnings (fixable idioms) and hints in separate reports: severity is
+    /// per report.
+    #[allow(clippy::too_many_lines)]
+    fn validate_all(&self, node: &SyntaxElement) -> Vec<Report> {
         let NodeOrToken::Node(node) = node else {
-            return None;
+            return Vec::new();
         };
-        let s = ast::Str::cast(node.clone())?;
-        let (script, lang, kind) = scripts::script_of(&s)?;
-        let Lang::Shell(shell) = lang else {
-            return None;
+        let Some(s) = ast::Str::cast(node.clone()) else {
+            return Vec::new();
+        };
+        let Some((script, Lang::Shell(shell), kind)) = scripts::script_of(&s) else {
+            return Vec::new();
         };
         let ctx = context(&s, kind, shell);
         let commands = commands::commands(&script.text, shell);
@@ -227,7 +252,7 @@ impl Rule for ShellIdiom {
         found.extend(missing_run_hooks(&s, &script.text, &commands));
         found.sort_by_key(|i| i.start);
         if found.is_empty() {
-            return None;
+            return Vec::new();
         }
         // words as written in Nix (`${...}`, not the placeholder)
         let base: usize = s.syntax().text_range().start().into();
@@ -247,16 +272,33 @@ impl Rule for ShellIdiom {
                 }
             }
         }
-        // the exact ones are fixed together
-        let changes: Vec<Change> = found
-            .iter()
-            .filter(|i| i.exact)
-            .filter_map(|i| change(&script, i))
-            .collect();
-        let fixed = script.apply(&s, &changes);
-        let mut report = self.report();
+        // fix the exact ones together; those that can't apply even alone
+        // are hints, those that clash with others are fixed in a later pass
+        let mut accepted: Vec<Change> = Vec::new();
+        let mut later = Vec::new();
+        for (i, idiom) in found.iter_mut().enumerate() {
+            if !idiom.exact {
+                continue;
+            }
+            let Some(c) = change(&script, idiom) else {
+                idiom.exact = false;
+                continue;
+            };
+            let mut with = accepted.clone();
+            with.push(c.clone());
+            if script.apply(&s, &with).is_some() {
+                accepted = with;
+            } else if script.apply(&s, &[c]).is_some() {
+                later.push(i);
+            } else {
+                idiom.exact = false;
+            }
+        }
+        let fixed = script.apply(&s, &accepted);
+        let mut warnings = self.report();
+        let mut hints = self.report().severity(crate::Severity::Hint);
         let mut suggested = false;
-        for idiom in &found {
+        for (i, idiom) in found.iter().enumerate() {
             let Some(at) = script.source_range(idiom.start, idiom.end) else {
                 continue;
             };
@@ -275,30 +317,33 @@ impl Rule for ShellIdiom {
                 (false, Some(caveat)) => format!("Use `{shown}`. {caveat}"),
                 (_, None) => format!("Use `{shown}`."),
             };
-            report = match (&fixed, idiom.exact, suggested) {
-                (Some(fixed), true, false) => {
+            if !idiom.exact {
+                hints = hints.diagnostic_with_help(at, message, help);
+                continue;
+            }
+            warnings = match (&fixed, later.contains(&i), suggested) {
+                (Some(fixed), false, false) => {
                     suggested = true;
-                    report.suggest(
+                    let message = if message.contains(&shown) {
+                        message
+                    } else {
+                        format!("{message}: `{shown}`")
+                    };
+                    warnings.suggest(
                         at,
-                        if message.contains(&shown) {
-                            message.clone()
-                        } else {
-                            format!("{message}: `{shown}`")
-                        },
+                        message,
                         Suggestion::with_replacement(
                             s.syntax().text_range(),
                             fixed.syntax().clone(),
                         ),
                     )
                 }
-                (Some(_), true, true) => report.diagnostic_fixed_later(at, message),
-                _ => report.diagnostic_with_help(at, message, help),
+                _ => warnings.diagnostic_fixed_later(at, message),
             };
         }
-        // only suggestions that change the mode: a hint, not a warning
-        if !found.iter().any(|i| i.exact) {
-            report = report.severity(crate::Severity::Hint);
-        }
-        (!report.diagnostics.is_empty()).then_some(report)
+        [warnings, hints]
+            .into_iter()
+            .filter(|r| !r.diagnostics.is_empty())
+            .collect()
     }
 }

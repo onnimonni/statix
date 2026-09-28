@@ -34,7 +34,7 @@ fn lints_of(parsed: &rnix::Parse<Root>, lints: &LintMap) -> Vec<Report> {
             WalkEvent::Enter(child) => lints.get(&child.kind()).map(|rules| {
                 rules
                     .iter()
-                    .filter_map(|rule| rule.validate(&child))
+                    .flat_map(|rule| rule.validate_all(&child))
                     .collect::<Vec<_>>()
             }),
             WalkEvent::Leave(_) => None,

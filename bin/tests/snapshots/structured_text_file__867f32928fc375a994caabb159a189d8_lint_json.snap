@@ -1,0 +1,39 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ scripts.setup.exec = ''
+  cat > config.json <<'EOF'
+  { "port": ${toString port},
+    "host": "localhost" }
+  EOF
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "structured_text_file",
+      "note": "Structured file written as text",
+      "code": 32,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 6
+            }
+          },
+          "message": "`config.json` is written as JSON text by the script",
+          "suggestion": null,
+          "fixable": false,
+          "help": "The text is known before the script runs, so let devenv write the file: `files.\"config.json\".json = { ... };`. Interpolated values are then quoted and escaped, and the file is always well formed."
+        }
+      ]
+    }
+  ]
+}

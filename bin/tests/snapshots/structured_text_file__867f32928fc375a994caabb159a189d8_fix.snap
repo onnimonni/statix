@@ -1,0 +1,10 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ scripts.setup.exec = ''
+  cat > config.json <<'EOF'
+  { "port": ${toString port},
+    "host": "localhost" }
+  EOF
+''; }
+---

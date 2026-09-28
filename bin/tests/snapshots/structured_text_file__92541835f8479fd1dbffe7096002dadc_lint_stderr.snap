@@ -1,0 +1,13 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ systemd.services.x.script = ''
+  cat > /var/lib/x/local.yaml <<EOF
+  ${lib.optionalString (f != null) ''
+    secrets:
+      x: '$(cat ${f})'
+  ''}
+  listen: 80
+  EOF
+''; }
+---

@@ -1,0 +1,23 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  mkdir -p $out
+  cat > $out/settings.toml <<EOF
+  [main]
+  path = "${pkgs.hello}"
+  EOF
+''
+---
+--- <temp_file_path>
++++ <temp_file_path> [fixed]
+@@ -1,7 +1,7 @@
+ pkgs.runCommand "x" { } ''
+-  mkdir -p $out
+-  cat > $out/settings.toml <<EOF
++  mkdir -p "$out"
++  cat > "$out"/settings.toml <<EOF
+   [main]
+   path = "${pkgs.hello}"
+   EOF
+ ''

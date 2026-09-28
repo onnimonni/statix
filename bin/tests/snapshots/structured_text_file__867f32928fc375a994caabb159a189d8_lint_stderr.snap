@@ -1,0 +1,17 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ scripts.setup.exec = ''
+  cat > config.json <<'EOF'
+  { "port": ${toString port},
+    "host": "localhost" }
+  EOF
+''; }
+---
+[structured_text_file] Warning: Structured file written as text
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   cat > config.json <<'EOF'
+   │   ─┬─  
+   │    ╰─── config.json is written as JSON text by the script
+───╯

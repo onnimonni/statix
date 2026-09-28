@@ -1,0 +1,50 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  cat > $out/settings.toml <<EOF
+  [main]
+  home = "$HOME"
+  EOF
+''
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Hint",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 9
+            },
+            "to": {
+              "line": 2,
+              "column": 13
+            }
+          },
+          "message": "SC2086: Double quote to prevent globbing and word splitting.",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 25
+              },
+              "to": {
+                "line": 6,
+                "column": 3
+              }
+            },
+            "fix": "''\n  cat > \"$out\"/settings.toml <<EOF\n  [main]\n  home = \"$HOME\"\n  EOF\n''"
+          },
+          "fixable": true
+        }
+      ]
+    }
+  ]
+}

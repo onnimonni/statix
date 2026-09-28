@@ -74,4 +74,4 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 ## `structured_text_file` lint (W32)
 
 - JSON/YAML/TOML/INI files written as literal text (`writeText`, `toFile`, `writeTextDir`, `writeTextFile`, `*."x.json".text` options) should be generated: `pkgs.formats.<fmt>`, devenv `files."x".<fmt>`.
-- Not reported: text that's only generated (`${builtins.toJSON x}`, YAML `---` separators), one static line, meson `--cross-file`/`--native-file` machine files (own syntax). Shell scripts writing structured files (`cat > x.json <<EOF`) aren't covered yet.
+- Not reported: text that's only generated (`${builtins.toJSON x}`, YAML `---` separators), one static line, meson `--cross-file`/`--native-file` machine files (own syntax). Shell scripts writing structured files are covered when the text is known before the script runs: `cat > f <<'EOF'` (or unquoted without `$`/backticks, and no shell expansions rendered by `${...}`), `echo`/`printf` with literal arguments, `>` only (`>>` appends to upstream files).

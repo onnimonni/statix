@@ -1,0 +1,28 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  mkdir -p $out
+  cat > $out/settings.toml <<EOF
+  [main]
+  path = "${pkgs.hello}"
+  EOF
+''
+---
+[shellcheck] Advice: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:2:12 ]
+   │
+ 2 │   mkdir -p $out
+   │            ──┬─  
+   │              ╰─── SC2086: Double quote to prevent globbing and word splitting.
+ 3 │   cat > $out/settings.toml <<EOF
+   │         ──┬─  
+   │           ╰─── SC2086: Double quote to prevent globbing and word splitting.
+───╯
+[structured_text_file] Warning: Structured file written as text
+   ╭─[ <temp_file_path>:3:3 ]
+   │
+ 3 │   cat > $out/settings.toml <<EOF
+   │   ─┬─  
+   │    ╰─── $out/settings.toml is written as TOML text by the script
+───╯

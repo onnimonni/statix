@@ -1,4 +1,8 @@
-use crate::{Metadata, Report, Rule, scripts::context::fn_name, utils};
+use crate::{
+    Metadata, Report, Rule,
+    scripts::{self, Lang, commands, context::fn_name, nixstr::PLACEHOLDER},
+    utils,
+};
 
 use macros::lint;
 use rnix::{
@@ -151,12 +155,112 @@ fn is_meson_machine_file(s: &ast::Str) -> bool {
         })
 }
 
+/// Like [`is_hand_written`] for a script's text: literal content beyond
+/// `${...}` and YAML separators, and interpolations or several lines.
+fn worth_generating(text: &str) -> bool {
+    let interpolated = text.contains(PLACEHOLDER);
+    let literal = text.replace(PLACEHOLDER, "");
+    let lines = literal
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && *l != "---")
+        .count();
+    lines > 0 && (interpolated || lines > 1)
+}
+
+/// Whether a `${...}` in an unquoted here-document renders shell expansions
+/// (`${optionalString x "password: '$(cat ${file})'"}`): runtime text.
+fn expands_at_runtime(s: &ast::Str, script: &scripts::nixstr::Script, w: &commands::Write) -> bool {
+    let Some(start) = w.expanding_at else {
+        return false;
+    };
+    let base: usize = s.syntax().text_range().start().into();
+    let source = s.syntax().to_string();
+    w.text.match_indices(PLACEHOLDER).any(|(i, _)| {
+        let Some(src) = script.src_at(start + i) else {
+            return true;
+        };
+        let Some(nix) = source.get(src.start - base..src.end - base) else {
+            return true;
+        };
+        // `$(`, `$VAR`, `''$`, backticks inside the interpolation; `${` is Nix
+        let bytes = nix.as_bytes();
+        nix.contains('`')
+            || bytes.windows(2).any(|p| {
+                p[0] == b'$' && (p[1] == b'(' || p[1] == b'_' || p[1].is_ascii_alphabetic())
+            })
+    })
+}
+
+/// Structured files a shell script writes with text known before it runs.
+fn script_writes(s: &ast::Str) -> Option<Report> {
+    let (script, lang, _) = scripts::script_of(s)?;
+    let Lang::Shell(shell) = lang else {
+        return None;
+    };
+    // cheap check before parsing
+    if !FORMATS
+        .iter()
+        .any(|(ext, _)| script.text.contains(&format!(".{ext}")))
+    {
+        return None;
+    }
+    let devenv = s
+        .syntax()
+        .ancestors()
+        .filter_map(AttrpathValue::cast)
+        .any(|apv| {
+            utils::enclosing_attrpath(apv.syntax()).is_some_and(|p| {
+                matches!(
+                    p.first().map(String::as_str),
+                    Some("scripts" | "tasks" | "processes" | "enterShell" | "enterTest")
+                )
+            })
+        });
+    let mut report: Option<Report> = None;
+    for w in commands::commands(&script.text, shell).writes {
+        let Some(format) = format_of(&w.file) else {
+            continue;
+        };
+        if !worth_generating(&w.text) || expands_at_runtime(s, &script, &w) {
+            continue;
+        }
+        let Some(at) = script.source_range(w.start, w.end) else {
+            continue;
+        };
+        let name = w.file.rsplit('/').next().unwrap_or(&w.file);
+        let help = if devenv && !w.file.contains('$') {
+            format!(
+                "The text is known before the script runs, so let devenv write the file: `files.\"{}\".{format} = {{ ... }};`.",
+                w.file.trim_start_matches("./")
+            )
+        } else {
+            format!(
+                "The text is known before the script runs, so generate it in Nix and copy it: `cp ${{(pkgs.formats.{format} {{ }}).generate \"{name}\" {{ ... }}}} {}`.",
+                w.file
+            )
+        };
+        let r = report
+            .take()
+            .unwrap_or_else(|| StructuredTextFile::new().report());
+        report = Some(r.diagnostic_with_help(
+            at,
+            format!("`{}` is written as {} text by the script", w.file, format.to_ascii_uppercase()),
+            format!("{help} Interpolated values are then quoted and escaped, and the file is always well formed."),
+        ));
+    }
+    report
+}
+
 impl Rule for StructuredTextFile {
     fn validate(&self, node: &SyntaxElement) -> Option<Report> {
         let NodeOrToken::Node(node) = node else {
             return None;
         };
         let s = ast::Str::cast(node.clone())?;
+        if let Some(report) = script_writes(&s) {
+            return Some(report);
+        }
         if !is_hand_written(&s) || is_meson_machine_file(&s) {
             return None;
         }

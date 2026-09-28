@@ -142,6 +142,24 @@ pub struct Commands {
     /// Byte ranges of data (here-documents, multi-line words), which can't
     /// hold comments.
     pub data: Vec<(usize, usize)>,
+    /// Files written with text known before the script runs:
+    /// `cat > x.json <<'EOF'`, `echo '{}' > x.json`.
+    pub writes: Vec<Write>,
+}
+
+/// A file a command writes (`>`, not `>>`) with static text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Write {
+    /// The file as written.
+    pub file: String,
+    /// The text written (Nix `${...}` placeholders included).
+    pub text: String,
+    /// Byte range of the command word.
+    pub start: usize,
+    pub end: usize,
+    /// For an unquoted here-document (`<<EOF`): where its text starts in
+    /// the script. Nix `${...}` in it may render to shell expansions.
+    pub expanding_at: Option<usize>,
 }
 
 /// Commands `text` (a `shell` script) runs.
@@ -512,6 +530,65 @@ impl Walker {
         text
     }
 
+    /// `cat > x.json <<'EOF'` / `echo '{}' > x.json`: text known before the
+    /// script runs, written to a file.
+    fn static_write(&mut self, simple: &ast::SimpleCommand, args: &[Arg], src: &Source) {
+        let items = || {
+            simple
+                .prefix
+                .iter()
+                .flat_map(|p| &p.0)
+                .chain(simple.suffix.iter().flat_map(|s| &s.0))
+        };
+        let mut file = None;
+        let mut heredoc = None;
+        let mut expanding_at = None;
+        for item in items() {
+            if let CommandPrefixOrSuffixItem::IoRedirect(redirect) = item {
+                match redirect {
+                    IoRedirect::File(
+                        fd,
+                        ast::IoFileRedirectKind::Write | ast::IoFileRedirectKind::Clobber,
+                        IoFileRedirectTarget::Filename(w),
+                    ) if fd.is_none_or(|fd| fd == 1) => file = Some(w.value.clone()),
+                    IoRedirect::HereDocument(fd, doc) if fd.is_none_or(|fd| fd == 0) => {
+                        let expands = doc.requires_expansion
+                            && (doc.doc.value.contains('$') || doc.doc.value.contains('`'));
+                        heredoc = Some((!expands).then(|| doc.doc.value.clone()));
+                        if doc.requires_expansion {
+                            expanding_at =
+                                doc.doc.loc.as_ref().map(|loc| src.byte(loc.start.index));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // `$out/config.json` is fine: only the text must be known
+        let Some(file) = file.map(|f| f.replace(['"', '\''], "")) else {
+            return;
+        };
+        let Some(first) = args.first() else { return };
+        let text = match (first.text.as_deref(), heredoc) {
+            (Some("cat"), Some(Some(body))) if args.len() == 1 => body,
+            (Some("echo" | "printf"), None) if args.len() > 1 => {
+                let words: Option<Vec<&str>> =
+                    args[1..].iter().map(|a| a.text.as_deref()).collect();
+                let Some(words) = words else { return };
+                // echo -n / printf 'fmt': still literal
+                words.join(" ")
+            }
+            _ => return,
+        };
+        self.out.writes.push(Write {
+            file,
+            text,
+            start: first.start,
+            end: first.end,
+            expanding_at,
+        });
+    }
+
     fn simple(&mut self, simple: &ast::SimpleCommand, src: &Source) {
         for item in simple.prefix.iter().flat_map(|p| &p.0) {
             self.prefix_or_suffix(item, src);
@@ -529,6 +606,9 @@ impl Walker {
             if let Some(arg) = self.prefix_or_suffix(item, src) {
                 args.push(arg);
             }
+        }
+        if src.clamp.is_none() {
+            self.static_write(simple, &args, src);
         }
         self.invocation(&args, Lookup::Any, src);
     }
@@ -1195,6 +1275,17 @@ mod tests {
         for (script, expected) in cases {
             assert_eq!(names(script), *expected, "{script}");
         }
+    }
+
+    #[test]
+    fn static_writes() {
+        let c = commands(
+            "cat > a.json <<'EOF'\n{ \"a\": 1 }\nEOF\ncat > \"$out/b.yaml\" <<EOF\nb: $HOME\nEOF\ncat >> c.toml <<EOF\nc = 1\nEOF\necho '{}' > d.json\necho \"$x\" > e.json\ncat <<EOF > f.toml\nf = 1\nEOF\n",
+            "bash",
+        );
+        let files: Vec<&str> = c.writes.iter().map(|w| w.file.as_str()).collect();
+        assert_eq!(files, ["a.json", "d.json", "f.toml"]);
+        assert_eq!(c.writes[0].text, "{ \"a\": 1 }\n");
     }
 
     #[test]

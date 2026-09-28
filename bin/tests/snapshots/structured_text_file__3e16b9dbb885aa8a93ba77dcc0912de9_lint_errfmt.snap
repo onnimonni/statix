@@ -1,0 +1,14 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  mkdir -p $out
+  cat > $out/settings.toml <<EOF
+  [main]
+  path = "${pkgs.hello}"
+  EOF
+''
+---
+<temp_file_path>>2:12:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>3:9:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.
+<temp_file_path>>3:3:W:32:[structured_text_file] `$out/settings.toml` is written as TOML text by the script

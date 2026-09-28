@@ -1,0 +1,10 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  cat >> pyproject.toml <<EOF
+  [tool.x]
+  a = 1
+  EOF
+''
+---

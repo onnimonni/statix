@@ -1,0 +1,17 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  cat > $out/settings.toml <<EOF
+  [main]
+  home = "$HOME"
+  EOF
+''
+---
+[shellcheck] Advice: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:2:9 ]
+   │
+ 2 │   cat > $out/settings.toml <<EOF
+   │         ──┬─  
+   │           ╰─── SC2086: Double quote to prevent globbing and word splitting.
+───╯

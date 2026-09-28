@@ -1,0 +1,14 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  echo '${builtins.toJSON versions}' > $out/installed.json
+''
+---
+--- <temp_file_path>
++++ <temp_file_path> [fixed]
+@@ -1,3 +1,3 @@
+ pkgs.runCommand "x" { } ''
+-  echo '${builtins.toJSON versions}' > $out/installed.json
++  echo '${builtins.toJSON versions}' > "$out"/installed.json
+ ''

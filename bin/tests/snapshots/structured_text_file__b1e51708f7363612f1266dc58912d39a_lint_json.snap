@@ -1,0 +1,47 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  echo '${builtins.toJSON versions}' > $out/installed.json
+''
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Hint",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 40
+            },
+            "to": {
+              "line": 2,
+              "column": 44
+            }
+          },
+          "message": "SC2086: Double quote to prevent globbing and word splitting.",
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 25
+              },
+              "to": {
+                "line": 3,
+                "column": 3
+              }
+            },
+            "fix": "''\n  echo '${builtins.toJSON versions}' > \"$out\"/installed.json\n''"
+          },
+          "fixable": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.runCommand "x" { } ''
+  echo '${builtins.toJSON versions}' > $out/installed.json
+''
+---
+<temp_file_path>>2:40:I:28:[shellcheck] SC2086: Double quote to prevent globbing and word splitting.

@@ -314,6 +314,9 @@ to generating them from a Nix value: `(pkgs.formats.json { }).generate`,
 devenv `files."x.json".json = { ... }`. Generated files are always well
 formed and interpolated values are quoted. Text that's already generated
 (`builtins.toJSON`), one static line, and meson `--cross-file`s are fine.
+Shell scripts writing such files with text known before they run
+(`cat > x.json <<'EOF'`, `echo '...' > x.yaml`) are reported too; runtime
+text (`$VAR`, `$(...)`) and appends (`>>`) aren't.
 
 ### Configuration
 

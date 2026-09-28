@@ -110,6 +110,7 @@ pub struct Fix {
     pub streaming: bool,
 }
 
+#[derive(Clone, Copy)]
 pub enum FixOut {
     Diff,
     Stream,

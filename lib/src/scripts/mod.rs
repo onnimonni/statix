@@ -8,7 +8,9 @@ mod tools;
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use rnix::ast;
@@ -80,12 +82,17 @@ thread_local! {
 }
 
 /// Run `f` with `path` as the file being linted, so lints can resolve paths
-/// relative to it.
+/// relative to it. Restored afterwards, also when `f` panics.
 pub fn with_current_file<R>(path: Option<&Path>, f: impl FnOnce() -> R) -> R {
-    let previous = CURRENT_FILE.with(|c| c.replace(path.map(Path::to_path_buf)));
-    let result = f();
-    CURRENT_FILE.with(|c| *c.borrow_mut() = previous);
-    result
+    struct Restore(Option<PathBuf>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            CURRENT_FILE.with(|c| *c.borrow_mut() = previous);
+        }
+    }
+    let _restore = Restore(CURRENT_FILE.with(|c| c.replace(path.map(Path::to_path_buf))));
+    f()
 }
 
 /// Directory of the file being linted.
@@ -99,6 +106,48 @@ pub fn current_dir() -> Option<PathBuf> {
     })
 }
 
+/// Raw checker findings (before noise filtering, which depends on where the
+/// script is used), shared by all files and fix passes. Keyed by language,
+/// the text, and for ruff the directory its configuration is found from.
+type CacheKey = (Lang, String, Option<PathBuf>);
+
+fn cache() -> &'static Mutex<HashMap<CacheKey, Arc<Vec<Finding>>>> {
+    static CACHE: OnceLock<Mutex<HashMap<CacheKey, Arc<Vec<Finding>>>>> = OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn cache_key(lang: Lang, text: &str, filename: Option<&Path>) -> CacheKey {
+    let dir = match lang {
+        Lang::Python => filename.and_then(Path::parent).map(Path::to_path_buf),
+        Lang::Shell(_) => None,
+    };
+    (lang, text.to_string(), dir)
+}
+
+fn cached(key: &CacheKey) -> Option<Arc<Vec<Finding>>> {
+    cache().lock().ok()?.get(key).cloned()
+}
+
+fn remember(key: CacheKey, findings: Vec<Finding>) -> Arc<Vec<Finding>> {
+    let findings = Arc::new(findings);
+    if let Ok(mut cache) = cache().lock() {
+        cache.insert(key, Arc::clone(&findings));
+    }
+    findings
+}
+
+fn raw_findings(lang: Lang, text: &str, filename: Option<&Path>) -> Option<Arc<Vec<Finding>>> {
+    let key = cache_key(lang, text, filename);
+    if let Some(findings) = cached(&key) {
+        return Some(findings);
+    }
+    let findings = match lang {
+        Lang::Shell(shell) => tools::shellcheck(shell, text)?,
+        Lang::Python => tools::ruff(text, filename)?,
+    };
+    Some(remember(key, findings))
+}
+
 /// Findings of the checker for `lang`, without the ones that are noise for
 /// `kind`. `None` when the checker isn't installed. `has_interp(line)` tells
 /// whether a line contains a `${...}` placeholder.
@@ -109,16 +158,106 @@ pub fn check(
     filename: Option<&Path>,
     has_interp: &dyn Fn(usize) -> bool,
 ) -> Option<Vec<Finding>> {
-    let findings = match lang {
-        Lang::Shell(shell) => tools::shellcheck(shell, text)?,
-        Lang::Python => tools::ruff(text, filename)?,
-    };
+    let findings = raw_findings(lang, text, filename)?;
     Some(
         findings
-            .into_iter()
+            .iter()
             .filter(|f| !is_noise(f, lang, kind, has_interp(f.line)))
+            .cloned()
             .collect(),
     )
+}
+
+/// Largest number of scripts per shellcheck process.
+const BATCH: usize = 200;
+
+/// Shell scripts under `root` to check, by dialect: inline scripts and the
+/// script files it refers to. Call inside [`with_current_file`].
+#[must_use]
+pub fn shell_scripts(root: &rnix::SyntaxNode) -> Vec<(&'static str, String)> {
+    let mut out = Vec::new();
+    for node in root.descendants() {
+        for reference in context::references(&node) {
+            if let (Lang::Shell(shell), Ok(text)) =
+                (reference.lang, std::fs::read_to_string(&reference.path))
+            {
+                out.push((shell, text));
+            }
+        }
+        let Some(s) = ast::Str::cast(node) else {
+            continue;
+        };
+        if let Some((script, Lang::Shell(shell), _)) = script_of(&s) {
+            out.push((shell, script.text));
+        }
+    }
+    out
+}
+
+/// Check `scripts` with a few batched shellcheck processes running in
+/// parallel and fill the cache, so lints find their results there instead
+/// of each starting a process. Process startup is most of shellcheck's cost.
+pub fn prefetch_scripts(scripts: Vec<(&'static str, String)>) {
+    use rayon::prelude::*;
+    let mut by_shell: HashMap<&'static str, Vec<String>> = HashMap::new();
+    for (shell, text) in scripts {
+        if cached(&cache_key(Lang::Shell(shell), &text, None)).is_none() {
+            by_shell.entry(shell).or_default().push(text);
+        }
+    }
+    let chunks: Vec<(&'static str, Vec<String>)> = by_shell
+        .into_iter()
+        .flat_map(|(shell, mut texts)| {
+            texts.sort_unstable();
+            texts.dedup();
+            balanced_chunks(texts)
+                .into_iter()
+                .map(move |chunk| (shell, chunk))
+        })
+        .collect();
+    chunks.par_iter().for_each(|(shell, texts)| {
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        // On failure the lints fall back to one process per script.
+        if let Some(results) = tools::shellcheck_many(shell, &refs) {
+            for (text, findings) in texts.iter().zip(results) {
+                remember(cache_key(Lang::Shell(shell), text, None), findings);
+            }
+        }
+    });
+}
+
+/// Split `texts` into chunks of similar total size (largest first into the
+/// least loaded chunk), several per thread so no chunk of big scripts is left
+/// running alone at the end.
+fn balanced_chunks(mut texts: Vec<String>) -> Vec<Vec<String>> {
+    let count = texts
+        .len()
+        .div_ceil(BATCH)
+        .max(rayon::current_num_threads() * 4)
+        .min(texts.len());
+    if count == 0 {
+        return Vec::new();
+    }
+    texts.sort_unstable_by_key(|t| std::cmp::Reverse(t.len()));
+    let mut chunks: Vec<(usize, Vec<String>)> = (0..count).map(|_| (0, Vec::new())).collect();
+    for text in texts {
+        let lightest = chunks
+            .iter_mut()
+            .filter(|(_, c)| c.len() < BATCH)
+            .min_by_key(|(load, _)| *load);
+        if let Some((load, chunk)) = lightest {
+            *load += text.len();
+            chunk.push(text);
+        } else {
+            chunks.push((text.len(), vec![text]));
+        }
+    }
+    chunks.into_iter().map(|(_, c)| c).collect()
+}
+
+/// [`prefetch_scripts`] for one file.
+pub fn prefetch(root: &rnix::SyntaxNode) {
+    prefetch_scripts(shell_scripts(root));
 }
 
 fn is_noise(f: &Finding, lang: Lang, kind: Kind, line_has_interp: bool) -> bool {
@@ -249,9 +388,8 @@ pub struct Checked {
     pub fixed_findings: Vec<usize>,
 }
 
-/// Check the script in `s` if it is one written in `lang_filter`'s family.
-#[must_use]
-pub fn check_string(s: &ast::Str, python: bool) -> Option<Checked> {
+/// The script in `s`, if it is one, with its language and kind.
+fn script_of(s: &ast::Str) -> Option<(Script, Lang, Kind)> {
     // Strings interpolated into a script are checked as part of it.
     if s.syntax()
         .ancestors()
@@ -265,15 +403,22 @@ pub fn check_string(s: &ast::Str, python: bool) -> Option<Checked> {
         return None;
     }
     let (lang, kind) = context::string_context(s, &script.text, 0)?;
-    if python != (lang == Lang::Python) {
-        return None;
-    }
     // `#!/usr/bin/env python3` in a devenv script: bash would run it, but
     // `devenv_exec_shebang` already reports the real problem.
     let foreign_shebang = matches!(lang, Lang::Shell(_))
         && script.text.trim_start().starts_with("#!")
         && !matches!(context::shebang_lang(&script.text), Some(Lang::Shell(_)));
     if foreign_shebang {
+        return None;
+    }
+    Some((script, lang, kind))
+}
+
+/// Check the script in `s` if it is a Python (`python`) or shell script.
+#[must_use]
+pub fn check_string(s: &ast::Str, python: bool) -> Option<Checked> {
+    let (script, lang, kind) = script_of(s)?;
+    if python != (lang == Lang::Python) {
         return None;
     }
     let filename = current_dir().map(|d| d.join("inline.py"));

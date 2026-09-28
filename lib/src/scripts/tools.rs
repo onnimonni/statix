@@ -14,6 +14,8 @@ fn run(env: &str, program: &str, args: &[&OsStr], script: &str) -> Option<Vec<u8
     let program = std::env::var_os(env).unwrap_or_else(|| program.into());
     let mut child = Command::new(program)
         .args(args)
+        // statix already runs one checker per core
+        .env("RAYON_NUM_THREADS", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -31,6 +33,8 @@ struct ScOutput {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ScComment {
+    #[serde(default)]
+    file: String,
     line: usize,
     column: usize,
     end_line: usize,
@@ -46,34 +50,72 @@ struct ScFix {
     replacements: Vec<fixes::Change>,
 }
 
+fn shellcheck_finding(c: ScComment, script: &str) -> Finding {
+    Finding {
+        fix: c
+            .fix
+            .map(|f| f.replacements)
+            .or_else(|| fixes::builtin(c.code, script, c.line, c.column, c.end_line, c.end_column)),
+        line: c.line,
+        column: c.column,
+        end_line: c.end_line,
+        end_column: c.end_column,
+        level: match c.level.as_str() {
+            "error" => Level::Error,
+            "warning" => Level::Warning,
+            _ => Level::Info,
+        },
+        code: format!("SC{}", c.code),
+        message: c.message,
+        url: Some(format!("https://www.shellcheck.net/wiki/SC{}", c.code)),
+    }
+}
+
+const SHELLCHECK_ARGS: [&str; 3] = ["--format=json1", "--exclude=SC1091", "--shell"];
+
 pub fn shellcheck(shell: &str, script: &str) -> Option<Vec<Finding>> {
-    let args = ["--format=json1", "--shell", shell, "--exclude=SC1091", "-"];
-    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    let mut args: Vec<&OsStr> = SHELLCHECK_ARGS.iter().map(OsStr::new).collect();
+    args.extend([OsStr::new(shell), OsStr::new("-")]);
     let stdout = run("STATIX_SHELLCHECK", "shellcheck", &args, script)?;
     let output: ScOutput = serde_json::from_slice(&stdout).ok()?;
     Some(
         output
             .comments
             .into_iter()
-            .map(|c| Finding {
-                fix: c.fix.map(|f| f.replacements).or_else(|| {
-                    fixes::builtin(c.code, script, c.line, c.column, c.end_line, c.end_column)
-                }),
-                line: c.line,
-                column: c.column,
-                end_line: c.end_line,
-                end_column: c.end_column,
-                level: match c.level.as_str() {
-                    "error" => Level::Error,
-                    "warning" => Level::Warning,
-                    _ => Level::Info,
-                },
-                code: format!("SC{}", c.code),
-                message: c.message,
-                url: Some(format!("https://www.shellcheck.net/wiki/SC{}", c.code)),
-            })
+            .map(|c| shellcheck_finding(c, script))
             .collect(),
     )
+}
+
+/// Check many scripts with one shellcheck process: they're written to temp
+/// files, and each comment names the file it belongs to. Process startup is
+/// most of shellcheck's cost for small scripts.
+pub fn shellcheck_many(shell: &str, scripts: &[&str]) -> Option<Vec<Vec<Finding>>> {
+    let dir = tempfile::tempdir().ok()?;
+    let paths: Vec<std::path::PathBuf> = scripts
+        .iter()
+        .enumerate()
+        .map(|(i, script)| {
+            let path = dir.path().join(format!("{i}.sh"));
+            std::fs::write(&path, script).ok().map(|()| path)
+        })
+        .collect::<Option<_>>()?;
+    let mut args: Vec<&OsStr> = SHELLCHECK_ARGS.iter().map(OsStr::new).collect();
+    args.push(OsStr::new(shell));
+    args.extend(paths.iter().map(|p| p.as_os_str()));
+    let stdout = run("STATIX_SHELLCHECK", "shellcheck", &args, "")?;
+    let output: ScOutput = serde_json::from_slice(&stdout).ok()?;
+
+    let mut out = vec![Vec::new(); scripts.len()];
+    for c in output.comments {
+        let index = Path::new(&c.file)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&i| i < scripts.len())?;
+        out[index].push(shellcheck_finding(c, scripts[index]));
+    }
+    Some(out)
 }
 
 #[derive(Deserialize)]

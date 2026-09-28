@@ -26,5 +26,6 @@ lints! {
     shellcheck,
     ruff,
     script_file,
-    undeclared_command
+    undeclared_command,
+    structured_text_file
 }

@@ -1,0 +1,8 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeText "docs.yaml" ''
+  ---
+  ${lib.concatMapStringsSep "\n---\n" builtins.toJSON docs}
+''
+---

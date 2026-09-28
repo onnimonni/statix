@@ -1,0 +1,5 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeText "config.json" (builtins.toJSON { port = 80; })
+---

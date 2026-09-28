@@ -1,0 +1,8 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeTextFile { name = "x.ini"; text = ''
+  [main]
+  key = ${value}
+''; }
+---

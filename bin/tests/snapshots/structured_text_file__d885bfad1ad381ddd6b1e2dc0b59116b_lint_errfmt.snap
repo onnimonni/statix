@@ -1,0 +1,9 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ files."settings.yaml".text = ''
+  a: 1
+  b: 2
+''; }
+---
+<temp_file_path>>1:32:W:32:[structured_text_file] `settings.yaml` is written as YAML text

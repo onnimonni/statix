@@ -1,0 +1,8 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeText "notes.txt" ''
+  a
+  b
+''
+---

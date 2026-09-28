@@ -1,0 +1,7 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeText "config.json" ''
+  { "port": ${toString port} }
+''
+---

@@ -1,0 +1,37 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ environment.etc."app/config.toml".text = ''
+  name = "${name}"
+  port = 80
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "structured_text_file",
+      "note": "Structured file written as text",
+      "code": 32,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 44
+            },
+            "to": {
+              "line": 4,
+              "column": 3
+            }
+          },
+          "message": "`app/config.toml` is written as TOML text",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Set `source` to a generated file instead of `text`: `source = (pkgs.formats.toml { }).generate \"config.toml\" { ... };`. Interpolated values are then quoted and escaped, and the file is always well formed. `pkgs.formats` has json, yaml, toml and ini; `lib.generators` has more."
+        }
+      ]
+    }
+  ]
+}

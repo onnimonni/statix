@@ -70,3 +70,8 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 
 - Ask Codex and Fable for design reviews of bigger features, and have Codex review implementations. Record decisions here.
 - Keep tests hermetic: they set `HOME`/`XDG_CONFIG_HOME`, and use a temporary `STATIX_CACHE_DIR` or project directory, so user configuration and caches don't leak in.
+
+## `structured_text_file` lint (W32)
+
+- JSON/YAML/TOML/INI files written as literal text (`writeText`, `toFile`, `writeTextDir`, `writeTextFile`, `*."x.json".text` options) should be generated: `pkgs.formats.<fmt>`, devenv `files."x".<fmt>`.
+- Not reported: text that's only generated (`${builtins.toJSON x}`, YAML `---` separators), one static line, meson `--cross-file`/`--native-file` machine files (own syntax). Shell scripts writing structured files (`cat > x.json <<EOF`) aren't covered yet.

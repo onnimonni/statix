@@ -1,0 +1,36 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeText "config.json" ''
+  { "port": ${toString port} }
+''
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "structured_text_file",
+      "note": "Structured file written as text",
+      "code": 32,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 30
+            },
+            "to": {
+              "line": 3,
+              "column": 3
+            }
+          },
+          "message": "`config.json` is written as JSON text",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Generate the file from a Nix value: `(pkgs.formats.json { }).generate \"config.json\" { ... }`. Interpolated values are then quoted and escaped, and the file is always well formed. `pkgs.formats` has json, yaml, toml and ini; `lib.generators` has more."
+        }
+      ]
+    }
+  ]
+}

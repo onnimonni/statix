@@ -1,0 +1,17 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ files."settings.yaml".text = ''
+  a: 1
+  b: 2
+''; }
+---
+[structured_text_file] Warning: Structured file written as text
+   ╭─[ <temp_file_path>:1:32 ]
+   │
+ 1 │ ╭─▶ { files."settings.yaml".text = ''
+   ┆ ┆   
+ 4 │ ├─▶ ''; }
+   │ │           
+   │ ╰─────────── settings.yaml is written as YAML text
+───╯

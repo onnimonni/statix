@@ -1,0 +1,37 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ files."settings.yaml".text = ''
+  a: 1
+  b: 2
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "structured_text_file",
+      "note": "Structured file written as text",
+      "code": 32,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 1,
+              "column": 32
+            },
+            "to": {
+              "line": 4,
+              "column": 3
+            }
+          },
+          "message": "`settings.yaml` is written as YAML text",
+          "suggestion": null,
+          "fixable": false,
+          "help": "devenv writes it from a Nix value: `files.\"settings.yaml\".yaml = { ... };`. Interpolated values are then quoted and escaped, and the file is always well formed. `pkgs.formats` has json, yaml, toml and ini; `lib.generators` has more."
+        }
+      ]
+    }
+  ]
+}

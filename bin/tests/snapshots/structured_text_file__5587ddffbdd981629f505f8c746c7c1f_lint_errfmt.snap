@@ -1,0 +1,9 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ environment.etc."app/config.toml".text = ''
+  name = "${name}"
+  port = 80
+''; }
+---
+<temp_file_path>>1:44:W:32:[structured_text_file] `app/config.toml` is written as TOML text

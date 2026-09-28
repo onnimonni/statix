@@ -1,0 +1,9 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeTextFile { name = "x.ini"; text = ''
+  [main]
+  key = ${value}
+''; }
+---
+<temp_file_path>>1:45:W:32:[structured_text_file] `x.ini` is written as INI text

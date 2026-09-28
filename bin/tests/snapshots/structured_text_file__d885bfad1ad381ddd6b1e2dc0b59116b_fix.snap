@@ -1,0 +1,8 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+{ files."settings.yaml".text = ''
+  a: 1
+  b: 2
+''; }
+---

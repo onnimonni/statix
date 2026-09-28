@@ -1,0 +1,8 @@
+---
+source: bin/tests/structured_text_file.rs
+---
+pkgs.writeText "config.json" ''
+  { "port": ${toString port} }
+''
+---
+<temp_file_path>>1:30:W:32:[structured_text_file] `config.json` is written as JSON text

@@ -305,6 +305,16 @@ provided = ["docker"]                          # commands the host provides
 
 `STATIX_SYSTEMS=x86_64-linux,aarch64-darwin` overrides `systems`.
 
+### Structured files written as text
+
+`structured_text_file` reports JSON, YAML, TOML and INI files written as
+text (`pkgs.writeText "config.json" ''...''`, `environment.etc."x.toml".text`,
+devenv `files."x.yaml".text`, `writeTextFile`, `builtins.toFile`) and points
+to generating them from a Nix value: `(pkgs.formats.json { }).generate`,
+devenv `files."x.json".json = { ... }`. Generated files are always well
+formed and interpolated values are quoted. Text that's already generated
+(`builtins.toJSON`), one static line, and meson `--cross-file`s are fine.
+
 ### Configuration
 
 Ignore lints and fixes by creating a `statix.toml` file at
@@ -353,6 +363,7 @@ shellcheck
 ruff
 script_file
 undeclared_command
+structured_text_file
 ```
 
 All lints are enabled by default. Generate a minimal config

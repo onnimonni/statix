@@ -217,26 +217,24 @@ in
   git-hooks.hooks.statix = {
     enable = true;
     package = statix;
-    # Fix what can be fixed in the changed files, then fail on anything left
-    # or changed, so the fixes get reviewed and staged. A changed script
+    # Fix what can be fixed in the staged files, then fail on anything left
+    # or changed, so the fixes get reviewed and staged. A staged script
     # (.sh/.py) is checked through the .nix files that refer to it.
     entry = toString (
       pkgs.writeShellScript "statix-hook" ''
-        ${statix}/bin/statix fix "$@"
-        ${statix}/bin/statix check "$@"
+        ${statix}/bin/statix fix --staged
+        ${statix}/bin/statix check --staged
       ''
     );
+    # run when one of these is staged
     files = "\\.(nix|sh|bash|py)$";
-    # pass the staged files (git-hooks.nix's statix hook defaults to the
-    # whole repository), and don't run batches of them in parallel
-    pass_filenames = true;
-    require_serial = true;
   };
 }
 ```
 
 `devenv shell` installs the hook. On `git commit` it runs on the staged
-files only, so its cost grows with the change, not the repository. When it
+files only (`--staged`), so its cost grows with the change, not the
+repository. When it
 fixes something the commit stops: review the changes, `git add` them and
 commit again.
 

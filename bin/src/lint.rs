@@ -15,9 +15,13 @@ pub fn lint_with(vfs_entry: &VfsEntry, lints: &LintMap) -> LintResult {
     let file_id = vfs_entry.file_id;
     let source = vfs_entry.contents;
     let parsed = Root::parse(source);
+    let reports = lib::with_current_file(Some(vfs_entry.file_path), || lints_of(&parsed, lints));
+    LintResult { file_id, reports }
+}
 
+fn lints_of(parsed: &rnix::Parse<Root>, lints: &LintMap) -> Vec<Report> {
     let error_reports = parsed.errors().iter().map(Report::from_parse_err);
-    let reports = parsed
+    parsed
         .syntax()
         .preorder_with_tokens()
         .filter_map(|event| match event {
@@ -31,9 +35,7 @@ pub fn lint_with(vfs_entry: &VfsEntry, lints: &LintMap) -> LintResult {
         })
         .flatten()
         .chain(error_reports)
-        .collect();
-
-    LintResult { file_id, reports }
+        .collect()
 }
 
 pub mod main {

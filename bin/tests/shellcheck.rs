@@ -32,3 +32,14 @@ fn agent_format_explains_what_needs_manual_work() {
     let stdout = _utils::test_cli(expr, &["check", "--format", "agent"]).unwrap();
     insta::assert_snapshot!(stdout);
 }
+
+generate_tests! {
+    rule: shellcheck,
+    expressions: [
+        // stdenv phases: $out, $src ... come from stdenv, not reported
+        "stdenv.mkDerivation { installPhase = ''\n  mkdir -p $out/bin\n  cp $src/tool $out/bin/\n''; }",
+        "runCommand \"x\" { } ''\n  touch $out\n  cd $TMPDIR\n''",
+        "{ systemd.services.web = { script = ''\n  cd $STATE_DIRECTORY\n''; }; }",
+        "{ config = mkIf cfg.enable { systemd.services.${name}.preStart = ''\n  rm -rf $CACHE/*\n''; }; }",
+    ],
+}

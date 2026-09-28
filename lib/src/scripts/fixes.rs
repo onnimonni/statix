@@ -25,6 +25,13 @@ pub const PLACEHOLDER_ARTIFACTS: &[u32] = &[
     2239, // `#!${bash}/bin/bash` looks relative
 ];
 
+/// Pointers to an earlier parse error, not findings of their own.
+pub const META: &[u32] = &[1072, 1073];
+
+/// Variables and functions that the surrounding environment (stdenv, the
+/// outer script, other activation snippets) provides.
+pub const HOOK_NOISE: &[u32] = &[2034, 2154];
+
 fn is_name(s: &str) -> bool {
     let mut chars = s.chars();
     chars

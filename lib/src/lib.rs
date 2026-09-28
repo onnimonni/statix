@@ -1,12 +1,13 @@
 #![recursion_limit = "1024"]
 mod lints;
 mod make;
-mod shell;
-mod shell_fixes;
+mod scripts;
 mod utils;
 
 pub use lints::LINTS;
-pub use shell::NIX_ESCAPING;
+pub use scripts::{
+    Kind, Lang, fix_text, nixstr::NIX_ESCAPING, referenced_files, with_current_file,
+};
 
 use rnix::{ParseError, SyntaxElement, SyntaxKind, TextRange};
 use std::{convert::Into, default::Default};
@@ -66,6 +67,35 @@ impl Report {
     ) -> Self {
         let mut diagnostic = Diagnostic::new(at, message);
         diagnostic.help = Some(help);
+        self.diagnostics.push(diagnostic);
+        self
+    }
+    /// Add a diagnostic about another file that `statix fix` resolves
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn external_fixed_later<S: AsRef<str>>(
+        mut self,
+        at: TextRange,
+        message: S,
+        external: External,
+    ) -> Self {
+        let mut diagnostic = Diagnostic::new(at, message);
+        diagnostic.fixed_later = true;
+        diagnostic.external = Some(external);
+        self.diagnostics.push(diagnostic);
+        self
+    }
+    /// Add a diagnostic about another file, with instructions for fixing it
+    #[allow(clippy::return_self_not_must_use)]
+    pub fn external_with_help<S: AsRef<str>>(
+        mut self,
+        at: TextRange,
+        message: S,
+        help: String,
+        external: External,
+    ) -> Self {
+        let mut diagnostic = Diagnostic::new(at, message);
+        diagnostic.help = Some(help);
+        diagnostic.external = Some(external);
         self.diagnostics.push(diagnostic);
         self
     }
@@ -159,6 +189,16 @@ pub struct Diagnostic {
     pub help: Option<String>,
     /// `statix fix` fixes it in a later pass although it has no suggestion yet.
     pub fixed_later: bool,
+    /// Where the problem really is, when it's in another file.
+    pub external: Option<External>,
+}
+
+/// A position in a file other than the one being linted.
+#[derive(Debug, Clone)]
+pub struct External {
+    pub path: std::path::PathBuf,
+    pub line: usize,
+    pub column: usize,
 }
 
 impl Diagnostic {
@@ -170,6 +210,7 @@ impl Diagnostic {
             suggestion: None,
             help: None,
             fixed_later: false,
+            external: None,
         }
     }
     /// Construct a diagnostic with a fix.
@@ -180,6 +221,7 @@ impl Diagnostic {
             suggestion: Some(suggestion),
             help: None,
             fixed_later: false,
+            external: None,
         }
     }
     /// Whether `statix fix` takes care of it.

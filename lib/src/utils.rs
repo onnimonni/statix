@@ -34,9 +34,9 @@ pub fn attr_name(attr: &rnix::ast::Attr) -> Option<String> {
 }
 
 /// Keys of the attribute sets enclosing `node`, outermost first, e.g. for `x` in
-/// `{ a = { b.c = x; }; }` this is `["a", "b", "c"]`. Returns `None` when a key
-/// is dynamic or `node` is (inside) a `let` binding, since then it is not an
-/// attribute path of the enclosing module.
+/// `{ a = { b.c = x; }; }` this is `["a", "b", "c"]`. Dynamic keys
+/// (`${name}`) are `*`. Stops at `let` bindings: for `x` in
+/// `let y = { a = x; }; in ...` this is `["a"]`.
 pub fn enclosing_attrpath(node: &SyntaxNode) -> Option<Vec<String>> {
     use rnix::ast::AttrpathValue;
     use rowan::ast::AstNode as _;
@@ -46,43 +46,33 @@ pub fn enclosing_attrpath(node: &SyntaxNode) -> Option<Vec<String>> {
             continue;
         };
         if apv.syntax().parent()?.kind() != SyntaxKind::NODE_ATTR_SET {
-            return None;
+            break;
         }
-        let names: Option<Vec<String>> = apv.attrpath()?.attrs().map(|a| attr_name(&a)).collect();
-        keys.splice(0..0, names?);
+        let names = apv
+            .attrpath()?
+            .attrs()
+            .map(|a| attr_name(&a).unwrap_or_else(|| "*".to_string()));
+        keys.splice(0..0, names);
     }
     Some(keys)
 }
 
-const SHELL_PACKAGES: &[&str] = &["bash", "bashInteractive"];
-
-/// Is there a sibling `package = pkgs.<not bash>;` next to this `exec`?
-pub fn has_non_shell_package(exec: &rnix::ast::AttrpathValue) -> bool {
+/// The `package = ...;` next to `exec` (`scripts.x = { exec; package; }` or
+/// `scripts.x.exec` + `scripts.x.package`), as written.
+pub fn sibling_package(exec: &rnix::ast::AttrpathValue) -> Option<String> {
     use rnix::ast::HasEntry as _;
     use rowan::ast::AstNode as _;
-    let Some(exec_keys) = exec
-        .attrpath()
-        .map(|p| p.attrs().filter_map(|a| attr_name(&a)).collect::<Vec<_>>())
-    else {
-        return false;
+    let keys = |apv: &rnix::ast::AttrpathValue| -> Vec<String> {
+        apv.attrpath()
+            .map(|p| p.attrs().filter_map(|a| attr_name(&a)).collect())
+            .unwrap_or_default()
     };
-    let Some(set) = exec.syntax().parent().and_then(rnix::ast::AttrSet::cast) else {
-        return false;
-    };
-    let mut package_keys = exec_keys;
+    let set = rnix::ast::AttrSet::cast(exec.syntax().parent()?)?;
+    let mut package_keys = keys(exec);
     package_keys.pop();
     package_keys.push("package".into());
-
-    set.attrpath_values().any(|sibling| {
-        let keys: Vec<_> = sibling
-            .attrpath()
-            .map(|p| p.attrs().filter_map(|a| attr_name(&a)).collect())
-            .unwrap_or_default();
-        let Some(value) = sibling.value() else {
-            return false;
-        };
-        let value = value.syntax().to_string();
-        let last = value.trim().rsplit('.').next().unwrap_or_default();
-        keys == package_keys && !SHELL_PACKAGES.contains(&last)
-    })
+    set.attrpath_values()
+        .find(|sibling| keys(sibling) == package_keys)
+        .and_then(|sibling| sibling.value())
+        .map(|value| value.syntax().to_string())
 }

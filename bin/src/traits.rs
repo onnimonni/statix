@@ -128,7 +128,6 @@ fn write_agent<T: Write>(
     lint_result: &LintResult,
     vfs: &ReadOnlyVfs,
 ) -> io::Result<()> {
-    const CONTEXT: usize = 2;
     let file_id = lint_result.file_id;
     let src = str::from_utf8(vfs.get(file_id)).unwrap();
     let path = vfs.file_path(file_id).to_str().unwrap_or("<unknown>");
@@ -174,7 +173,7 @@ fn write_agent<T: Write>(
     writeln!(writer, "Fix by editing the file:\n")?;
     if manual
         .iter()
-        .any(|(_, _, report, _)| report.name == "shellcheck")
+        .any(|(_, _, report, _)| ["shellcheck", "ruff"].contains(&report.name))
     {
         writeln!(writer, "{}\n", lib::NIX_ESCAPING)?;
     }
@@ -202,16 +201,40 @@ Afterwards re-run `statix fix {path}` and `statix check -o agent {path}` until n
             (None, Some(docs)) => writeln!(writer, "{docs}\n")?,
             (None, None) => writeln!(writer, "How to fix: {}.\n", report.note)?,
         }
-        writeln!(writer, "```nix")?;
-        let first = l.saturating_sub(CONTEXT).max(1);
-        let last = (l + CONTEXT).min(lines.len());
-        for n in first..=last {
-            let marker = if n == *l { ">" } else { " " };
-            writeln!(writer, "{marker}{n:>5} | {}", lines[n - 1])?;
+        match &d.external {
+            Some(e) => {
+                let text = std::fs::read_to_string(&e.path).unwrap_or_default();
+                let ext_lines: Vec<&str> = text.lines().collect();
+                writeln!(
+                    writer,
+                    "In `{}:{}:{}` (referenced from {path}:{l}):\n",
+                    e.path.display(),
+                    e.line,
+                    e.column
+                )?;
+                write_context(writer, "", &ext_lines, e.line)?;
+            }
+            None => write_context(writer, "nix", &lines, *l)?,
         }
-        writeln!(writer, "```\n")?;
     }
     Ok(())
+}
+
+fn write_context<T: Write>(
+    writer: &mut T,
+    lang: &str,
+    lines: &[&str],
+    line: usize,
+) -> io::Result<()> {
+    const CONTEXT: usize = 2;
+    writeln!(writer, "```{lang}")?;
+    let first = line.saturating_sub(CONTEXT).max(1);
+    let last = (line + CONTEXT).min(lines.len());
+    for n in first..=last {
+        let marker = if n == line { ">" } else { " " };
+        writeln!(writer, "{marker}{n:>5} | {}", lines[n - 1])?;
+    }
+    writeln!(writer, "```\n")
 }
 
 /// The "Why is this bad?" and "Example" parts of a lint's documentation.
@@ -259,6 +282,16 @@ mod json {
         fixable: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
         help: Option<&'μ String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        external: Option<JsonExternal<'μ>>,
+    }
+
+    /// The finding is in another file (a referenced script).
+    #[derive(Serialize)]
+    struct JsonExternal<'μ> {
+        file: &'μ std::path::Path,
+        line: usize,
+        column: usize,
     }
 
     #[derive(Serialize)]
@@ -323,6 +356,11 @@ mod json {
                         }),
                         fixable: d.is_fixable(),
                         help: d.help.as_ref(),
+                        external: d.external.as_ref().map(|e| JsonExternal {
+                            file: &e.path,
+                            line: e.line,
+                            column: e.column,
+                        }),
                     })
                     .collect::<Vec<_>>();
                 JsonReport {

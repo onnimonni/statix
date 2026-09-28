@@ -1,6 +1,7 @@
 //! Render Nix strings as the shell scripts they evaluate to, remembering the
 //! source byte range of every char so results can be mapped back.
 
+use super::fixes::Change;
 use rnix::ast::{self, AstToken as _, InterpolPart};
 use rowan::ast::AstNode as _;
 
@@ -9,7 +10,7 @@ use rowan::ast::AstNode as _;
 pub const PLACEHOLDER: &str = "__nix_interp__";
 
 /// How to edit a shell script that lives in a Nix string.
-pub const NIX_ESCAPING: &str = "`shellcheck` findings are in shell scripts written as Nix strings. \
+pub const NIX_ESCAPING: &str = "`shellcheck` and `ruff` findings are in scripts written as Nix strings. \
 Keep `${...}` interpolations as they are. In `''...''` strings write `''${` for a literal `${` \
 and `'''` for `''`; in `\"...\"` strings escape `\"` and `\\` and write `\\${` for a literal `${`.";
 
@@ -170,19 +171,100 @@ impl Script {
 
     /// Byte offset in `self.text` of a 1-based (line, column).
     pub fn text_offset(&self, line: usize, col: usize) -> Option<usize> {
-        let line_start = self
-            .text
-            .split('\n')
-            .take(line.checked_sub(1)?)
-            .map(|l| l.len() + 1)
-            .sum::<usize>();
-        let rest = self.text[line_start..].split('\n').next()?;
-        let idx = col.checked_sub(1)?;
-        let byte = rest.char_indices().nth(idx).map_or_else(
-            || (idx == rest.chars().count()).then_some(rest.len()),
-            |(b, _)| Some(b),
-        )?;
-        Some(line_start + byte)
+        super::text_offset(&self.text, line, col)
+    }
+
+    /// Source range of the rendered text between byte offsets `start..end`.
+    pub fn source_range(&self, start: usize, end: usize) -> Option<rnix::TextRange> {
+        let position = |byte: usize| {
+            let before = &self.text[..byte];
+            let line = before.matches('\n').count() + 1;
+            let col = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+            (line, col)
+        };
+        let (l1, c1) = position(start);
+        let (l2, c2) = position(end);
+        let (a, _) = self.source_offset(l1, c1, false)?;
+        let (b, _) = self.source_offset(l2, c2, true)?;
+        Some(rnix::TextRange::new(
+            rnix::TextSize::try_from(a).ok()?,
+            rnix::TextSize::try_from(b.max(a)).ok()?,
+        ))
+    }
+
+    /// Whether a 1-based line of the script contains a `${...}` placeholder.
+    pub fn line_has_interp(&self, line: usize) -> bool {
+        self.lines
+            .get(line.wrapping_sub(1))
+            .is_some_and(|l| l.chars.iter().any(|c| c.interp))
+    }
+
+    /// `s` (the string this script was rendered from) with `changes` applied,
+    /// if they can be expressed in the Nix source and it renders to exactly
+    /// the intended script. Interpolations may only be replaced as a whole,
+    /// by a replacement that keeps their placeholders.
+    pub fn apply(&self, s: &ast::Str, changes: &[Change]) -> Option<ast::Str> {
+        if changes.is_empty() {
+            return None;
+        }
+        let base: usize = s.syntax().text_range().start().into();
+        let original = s.syntax().to_string();
+        let mut interps: Vec<(usize, usize)> = self
+            .lines
+            .iter()
+            .flat_map(|l| &l.chars)
+            .filter(|c| c.interp)
+            .map(|c| (c.start, c.end))
+            .collect();
+        interps.dedup();
+
+        let mut edits = Vec::new();
+        for r in changes {
+            let (a, exact_a) = self.source_offset(r.line, r.column, false)?;
+            let (b, exact_b) = self.source_offset(r.end_line, r.end_column, true)?;
+            if !exact_a || !exact_b || b < a {
+                return None;
+            }
+            let covered: Vec<_> = interps
+                .iter()
+                .filter(|&&(s, e)| a < e && s < b)
+                .copied()
+                .collect();
+            if covered.iter().any(|&(s, e)| s < a || e > b) {
+                return None;
+            }
+            // Escape the replacement, putting the covered `${...}` back in
+            // place of their placeholders.
+            let pieces: Vec<&str> = r.replacement.split(PLACEHOLDER).collect();
+            if pieces.len() != covered.len() + 1 {
+                return None;
+            }
+            let mut source = self.escape(pieces[0]);
+            for (piece, (s, e)) in pieces[1..].iter().zip(&covered) {
+                source.push_str(&original[s - base..e - base]);
+                source.push_str(&self.escape(piece));
+            }
+            let ta = self.text_offset(r.line, r.column)?;
+            let tb = self.text_offset(r.end_line, r.end_column)?;
+            edits.push((a - base, b - base, ta, tb, source, r.replacement.as_str()));
+        }
+        // Apply back to front; bail out on overlapping edits.
+        edits.sort_by_key(|e| std::cmp::Reverse((e.0, e.1)));
+        if edits.windows(2).any(|w| w[1].1 > w[0].0) {
+            return None;
+        }
+
+        let mut src = original.clone();
+        let mut expected = self.text.clone();
+        for (a, b, ta, tb, source, replacement) in edits {
+            src.replace_range(a..b, &source);
+            expected.replace_range(ta..tb, replacement);
+        }
+        let parse = rnix::Root::parse(&src).ok().ok()?;
+        let Some(ast::Expr::Str(fixed)) = parse.expr() else {
+            return None;
+        };
+        (Script::new(&fixed).text == expected).then_some(fixed)
     }
 
     /// Escape shell text for insertion into this Nix string.

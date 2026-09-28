@@ -1,11 +1,9 @@
 ---
 source: bin/tests/shellcheck.rs
 ---
-{ tasks."a:b".exec = ''
-  read name
-  export VERSION=$(${pkgs.git}/bin/git describe)
-  echo "$name $VERSION"
-''; }
+{ systemd.services.web = { script = ''
+  cd $STATE_DIRECTORY
+''; }; }
 ---
 {
   "file": "<temp_file_path>",
@@ -24,37 +22,37 @@ source: bin/tests/shellcheck.rs
             },
             "to": {
               "line": 2,
-              "column": 7
+              "column": 22
             }
           },
-          "message": "SC2162: read without -r will mangle backslashes.",
+          "message": "SC2164: Use 'cd ... || exit' or 'cd ... || return' in case cd fails.",
           "suggestion": {
             "at": {
               "from": {
                 "line": 1,
-                "column": 22
+                "column": 37
               },
               "to": {
-                "line": 5,
+                "line": 3,
                 "column": 3
               }
             },
-            "fix": "''\n  read -r name\n  export VERSION\n  VERSION=$(${pkgs.git}/bin/git describe)\n  echo \"$name $VERSION\"\n''"
+            "fix": "''\n  cd $STATE_DIRECTORY || exit\n''"
           },
           "fixable": true
         },
         {
           "at": {
             "from": {
-              "line": 3,
-              "column": 10
+              "line": 2,
+              "column": 6
             },
             "to": {
-              "line": 3,
-              "column": 17
+              "line": 2,
+              "column": 22
             }
           },
-          "message": "SC2155: Declare and assign separately to avoid masking return values.",
+          "message": "SC2086: Double quote to prevent globbing and word splitting.",
           "suggestion": null,
           "fixable": true
         }

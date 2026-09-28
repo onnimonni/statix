@@ -74,7 +74,10 @@ impl Rule for DevenvExecShebang {
         if !first_line.trim_start().starts_with("#!") {
             return None;
         }
-        if utils::has_non_shell_package(&apv) {
+        let non_shell = utils::sibling_package(&apv).is_some_and(|p| {
+            !["bash", "bashInteractive"].contains(&p.trim().rsplit('.').next().unwrap_or(""))
+        });
+        if non_shell {
             return None;
         }
 

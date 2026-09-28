@@ -124,12 +124,14 @@ statix check --changed origin/main     # changed since a branch point
 
 `statix fix` takes the same options.
 
-Results are cached between runs in `$XDG_CACHE_HOME/statix` (or
-`$STATIX_CACHE_DIR`): a file that had no findings is skipped until it or a
-script it refers to changes, and checker results are reused per script.
-The cache is dropped when statix, the enabled lints, `statix.toml` or the
-`shellcheck`/`ruff` versions change. Turn it off with `--no-cache` or
-`STATIX_NO_CACHE=1`.
+Results are cached between runs in `.statix-cache/` at the repository root
+(next to `.git`; `$STATIX_CACHE_DIR` overrides). It ignores itself for git
+and stores paths relative to the root, so a copy of the repository, e.g. a
+copy-on-write clone for a new worktree, starts with a warm cache. A file
+that had no findings is skipped until it or a script it refers to changes,
+and checker results are reused per script. The cache is dropped when
+statix, the enabled lints, `statix.toml` or the `shellcheck`/`ruff`
+versions change. Turn it off with `--no-cache` or `STATIX_NO_CACHE=1`.
 
 On all of nixpkgs (44k files, 12 cores): 22 s the first time, 6 s again
 (files with findings are re-checked), 0.3 s for one changed file, 0.14 s

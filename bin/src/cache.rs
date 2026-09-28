@@ -1,12 +1,15 @@
 //! Results kept between runs, so unchanged files and scripts aren't checked
 //! again.
 //!
-//! Two JSON files per project under `$STATIX_CACHE_DIR`,
-//! `$XDG_CACHE_HOME/statix` or `~/.cache/statix`:
-//! - `<project>.files.json`: per `.nix` file its content hash, the script
-//!   files it refers to (with their hashes) and whether it had no findings;
-//! - `<project>.scripts.json`: checker findings per script (keyed by a hash of
-//!   its text), only loaded when something needs checking.
+//! Stored in the repository, in `.statix-cache/` next to `.git` (or in the
+//! current directory outside git; `$STATIX_CACHE_DIR` overrides), with paths
+//! relative to that root. A copy of the repository (e.g. a copy-on-write
+//! clone for a new worktree) starts with a warm cache. The directory ignores
+//! itself for git. It holds:
+//! - `files.json`: per `.nix` file its content hash, the script files it
+//!   refers to (with their hashes) and whether it had no findings;
+//! - `scripts.json`: checker findings per script (keyed by a hash of its
+//!   text), only loaded when something needs checking.
 //!
 //! A file that had no findings and whose content and referenced scripts are
 //! unchanged is skipped. Everything is dropped when the statix binary, the
@@ -49,6 +52,8 @@ pub struct FileEntry {
 }
 
 pub struct Cache {
+    root: PathBuf,
+    cwd: PathBuf,
     files_path: PathBuf,
     scripts_path: PathBuf,
     epoch: String,
@@ -75,14 +80,39 @@ fn stat(path: &Path) -> Option<(u64, u128)> {
     Some((meta.len(), mtime))
 }
 
-fn cache_dir() -> Option<PathBuf> {
-    if let Some(dir) = std::env::var_os("STATIX_CACHE_DIR") {
-        return Some(PathBuf::from(dir));
+/// The repository root: the closest directory with `.git` (a directory, or a
+/// file in worktrees) above the current one, else the current directory.
+fn project_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    Some(
+        cwd.ancestors()
+            .find(|dir| dir.join(".git").exists())
+            .unwrap_or(&cwd)
+            .to_path_buf(),
+    )
+}
+
+/// `path` relative to `root`, resolved lexically from `cwd` (no file system
+/// access, so it's cheap for many files).
+fn relative_to(root: &Path, cwd: &Path, path: &Path) -> PathBuf {
+    use std::path::Component;
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    let mut out = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
     }
-    let base = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
-    Some(base.join("statix"))
+    out.strip_prefix(root)
+        .map_or(out.clone(), Path::to_path_buf)
 }
 
 /// What the saved results depend on besides file contents.
@@ -118,6 +148,11 @@ fn write<T: Serialize>(path: &Path, epoch: &str, data: T) {
     if fs::create_dir_all(dir).is_err() {
         return;
     }
+    // keep the cache out of git without touching the project's .gitignore
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        let _ = fs::write(ignore, "# statix cache\n*\n");
+    }
     let saved = Saved {
         format: FORMAT,
         epoch: epoch.to_string(),
@@ -140,20 +175,33 @@ impl Cache {
         if !enabled || std::env::var_os("STATIX_NO_CACHE").is_some() {
             return None;
         }
-        let project = fs::canonicalize(".").ok()?;
-        let name = lib::content_hash(project.to_string_lossy().as_bytes());
-        let dir = cache_dir()?;
+        let root = project_root()?;
+        let cwd = std::env::current_dir().ok()?;
+        let dir = std::env::var_os("STATIX_CACHE_DIR")
+            .map_or_else(|| root.join(".statix-cache"), PathBuf::from);
         let epoch = epoch(lints, conf);
-        let files_path = dir.join(format!("{}.files.json", &name[..16]));
+        let files_path = dir.join("files.json");
         let files = read(&files_path, &epoch).unwrap_or_default();
         Some(Self {
-            scripts_path: dir.join(format!("{}.scripts.json", &name[..16])),
+            scripts_path: dir.join("scripts.json"),
+            root,
+            cwd,
             files_path,
             epoch,
             files,
             files_changed: false,
             scripts_loaded: false,
         })
+    }
+
+    /// Key of `path` (as given on the command line) in the cache.
+    fn key(&self, path: &Path) -> PathBuf {
+        relative_to(&self.root, &self.cwd, path)
+    }
+
+    /// A cached (root relative) path as a path to open.
+    fn open_path(&self, key: &Path) -> PathBuf {
+        self.root.join(key)
     }
 
     /// Load the saved checker results, before checking anything.
@@ -170,13 +218,14 @@ impl Cache {
     /// nor the scripts it refers to changed since.
     #[must_use]
     pub fn is_clean(&self, path: &Path, contents: &str) -> bool {
-        let Some(entry) = self.files.get(path) else {
+        let Some(entry) = self.files.get(&self.key(path)) else {
             return false;
         };
         entry.clean
             && entry.hash == lib::content_hash(contents.as_bytes())
             && entry.refs.iter().all(|(script, hash)| {
-                fs::read(script).is_ok_and(|bytes| lib::content_hash(&bytes) == *hash)
+                fs::read(self.open_path(script))
+                    .is_ok_and(|bytes| lib::content_hash(&bytes) == *hash)
             })
     }
 
@@ -184,10 +233,10 @@ impl Cache {
     /// recorded (judged by size and modification time, without reading it).
     #[must_use]
     pub fn refs_if_unchanged(&self, path: &Path) -> Option<Vec<PathBuf>> {
-        let entry = self.files.get(path)?;
+        let entry = self.files.get(&self.key(path))?;
         let (size, mtime_ns) = stat(path)?;
         (entry.size == size && entry.mtime_ns == mtime_ns)
-            .then(|| entry.refs.iter().map(|(p, _)| p.clone()).collect())
+            .then(|| entry.refs.iter().map(|(p, _)| self.open_path(p)).collect())
     }
 
     /// Remember what checking `path` found.
@@ -199,11 +248,11 @@ impl Cache {
             .into_iter()
             .filter_map(|r| {
                 let hash = lib::content_hash(&fs::read(&r).ok()?);
-                Some((r, hash))
+                Some((self.key(&r), hash))
             })
             .collect();
         self.files.insert(
-            path.to_path_buf(),
+            self.key(path),
             FileEntry {
                 hash: lib::content_hash(contents.as_bytes()),
                 size,
@@ -219,7 +268,8 @@ impl Cache {
     /// Mark `path` as used, so it isn't pruned.
     pub fn touch(&mut self, path: &Path) {
         let today = today();
-        if let Some(entry) = self.files.get_mut(path)
+        let key = self.key(path);
+        if let Some(entry) = self.files.get_mut(&key)
             && entry.last_used != today
         {
             entry.last_used = today;
@@ -234,7 +284,8 @@ impl Cache {
             let mut files: Files = read(&self.files_path, &self.epoch).unwrap_or_default();
             files.extend(self.files);
             let oldest = today().saturating_sub(MAX_AGE_DAYS);
-            files.retain(|path, entry| entry.last_used >= oldest && path.exists());
+            let root = self.root.clone();
+            files.retain(|path, entry| entry.last_used >= oldest && root.join(path).exists());
             write(&self.files_path, &self.epoch, files);
         }
         if lib::script_cache_changed() {

@@ -55,7 +55,7 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
   - Unknown directive keys or values are warnings.
   - OS-provided commands (darwin: pbcopy, pbpaste, osascript, open, defaults, security, launchctl, sw_vers, xcrun, plutil, hdiutil, diskutil, codesign, ditto; linux: systemctl, loginctl) are provided automatically on those systems.
   - Messages are paste-ready: the exact `lib.optionals` wrapper or directive to add.
-- Future idea, not v1: infer platforms from the scripts themselves (`uname`, `$OSTYPE`, `case $(uname)`), possibly with tree-sitter-bash (tracked in a GitHub issue).
+- Future idea, not v1: infer platforms from the scripts themselves (`uname`, `$OSTYPE`, `case $(uname)`), possibly with tree-sitter-bash ([#1](https://github.com/onnimonni/statix/issues/1)).
 - Tests: resholve-derived snippets with expected commands, per-context declarations, interpolation and path cases, directives, Unicode offsets, malformed scripts, shared fragments.
 
 ## Working on this repository

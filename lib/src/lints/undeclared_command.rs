@@ -144,17 +144,52 @@ fn unknown_directive(unknown: &[String]) -> String {
 const ALWAYS_AVAILABLE: &[&str] = &[
     "rm", "mkdir", "cat", "cp", "mv", "grep", "ln", "chown", "touch", "which", "locale", "dirname",
     "sudo", "mktemp", "chmod", "sort", "tail", "head", "cut", "find", "wc", "sleep", "tee", "stat",
-    "basename", "date", "hostname",
+    "basename", "date", "hostname", "stat", "install",
 ];
 
-/// `sed -i` without an attached suffix: GNU sed takes `-i`, macOS (BSD) sed
-/// needs `-i ''`, which GNU sed rejects. `-i.bak` works on both.
-fn sed_in_place(u: &Use) -> bool {
-    u.args.iter().flatten().any(|a| {
-        a == "--in-place"
-            || a.starts_with("--in-place=")
-            || (a.starts_with('-') && !a.starts_with("--") && a.ends_with('i'))
-    })
+/// Message and help when host tool `name` is used in a way that differs
+/// between GNU (Linux) and BSD (macOS).
+fn non_portable(name: &str, u: &Use) -> Option<(String, String)> {
+    let options = || {
+        u.args
+            .iter()
+            .flatten()
+            .take_while(|a| *a != "--")
+            .filter(|a| a.starts_with('-') && a.len() > 1)
+    };
+    match name {
+        // `sed -i` without an attached suffix: GNU sed takes `-i`, macOS sed
+        // needs `-i ''`, which GNU sed rejects. `-i.bak` works on both.
+        "sed" => options()
+            .any(|a| {
+                a == "--in-place"
+                    || a.starts_with("--in-place=")
+                    || (!a.starts_with("--") && a.ends_with('i'))
+            })
+            .then(|| {
+                (
+                    "`sed -i` isn't portable: macOS sed needs `-i ''`, which GNU sed rejects".into(),
+                    "Declare `pkgs.gnused` so every system runs GNU sed, or use an attached suffix that both accept (`sed -i.bak ... && rm file.bak`).".into(),
+                )
+            }),
+        // GNU `stat -c FORMAT`, BSD `stat -f FORMAT` (GNU `-f`: file system)
+        "stat" => options().find(|a| *a != "-L").map(|a| {
+            (
+                format!("`stat {a}` isn't portable: GNU and macOS stat have different options"),
+                "GNU stat formats with `-c`/`--format`, macOS stat with `-f`, and GNU `-f` means file system status. Declare `pkgs.coreutils` so every system runs GNU stat.".into(),
+            )
+        }),
+        // GNU only: -D (create leading directories), -t/-T, -Z, long options
+        "install" => options()
+            .find(|a| a.starts_with("--") || a.contains(['D', 't', 'T', 'Z']))
+            .map(|a| {
+                (
+                    format!("`install {a}` isn't portable: macOS install lacks GNU's `-D`, `-t`, `-T`, `-Z` and long options"),
+                    "Declare `pkgs.coreutils` so every system runs GNU install, or create the directory first (`mkdir -p dir && install -m 644 file dir/`).".into(),
+                )
+            }),
+        _ => None,
+    }
 }
 
 fn systems_text(systems: &[String]) -> String {
@@ -306,7 +341,9 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
             continue;
         }
         let (use_cond, provided, disabled) = directives_at(&directives, u.start);
-        if ALWAYS_AVAILABLE.contains(&name) {
+        // common tools are allowed, unless used in a way only GNU supports
+        let always = ALWAYS_AVAILABLE.contains(&name);
+        if always && non_portable(name, u).is_none() {
             continue;
         }
         if disabled
@@ -340,19 +377,19 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
         } else if opaque {
             None
         } else {
-            check_declared(name, declared, programs, &effective, &available, at).map(|f| {
-                // the host's sed: GNU on Linux, BSD on macOS
+            check_declared(name, declared, programs, &effective, &available, at).and_then(|f| {
+                // the host's tool: GNU on Linux, BSD on macOS
                 let darwin = effective
                     .iter()
                     .any(|s| programs::platform_matches("darwin", s) == Some(true));
-                if name == "sed" && darwin && sed_in_place(u) {
-                    Finding {
+                match non_portable(name, u) {
+                    Some((message, help)) if darwin => Some(Finding {
                         at: f.at,
-                        message: "`sed -i` isn't portable: macOS sed needs `-i ''`, which GNU sed rejects".into(),
-                        help: "Declare `pkgs.gnused` so every system runs GNU sed, or use an attached suffix that both accept (`sed -i.bak ... && rm file.bak`).".into(),
-                    }
-                } else {
-                    f
+                        message,
+                        help,
+                    }),
+                    _ if always => None,
+                    _ => Some(f),
                 }
             })
         };

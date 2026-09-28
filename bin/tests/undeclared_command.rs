@@ -11,7 +11,7 @@ fn check(nix: &str) -> String {
 
     let linux = root.join("linux.tsv");
     let darwin = root.join("darwin.tsv");
-    let common = "jq\tbin\tjq\ncurl\tbin\tcurl\nripgrep\tout\trg\ncoreutils\tout\tls\ncoreutils\tout\tcat\ncoreutils\tout\tuname\ncoreutils\tout\tchroot\npnpm\tout\tpnpm\nnodejs\tout\tnode\ngit\tout\tgit\ngnused\tout\tsed\n";
+    let common = "jq\tbin\tjq\ncurl\tbin\tcurl\nripgrep\tout\trg\ncoreutils\tout\tls\ncoreutils\tout\tcat\ncoreutils\tout\tuname\ncoreutils\tout\tchroot\ncoreutils\tout\tstat\ncoreutils\tout\tinstall\npnpm\tout\tpnpm\nnodejs\tout\tnode\ngit\tout\tgit\ngnused\tout\tsed\n";
     fs::write(
         &linux,
         format!("{common}strace\tout\tstrace\nxclip\tout\txclip\n"),
@@ -283,4 +283,35 @@ fn runtime_inputs_platforms_and_chroot() {
 "#,
     );
     assert_eq!(out, "");
+}
+
+#[test]
+fn gnu_only_options_of_host_tools() {
+    let out = check(
+        r#"{ pkgs, ... }: {
+  a = pkgs.writeShellApplication {
+    name = "a";
+    text = ''
+      stat -c %s x
+      install -Dm644 a b
+      install -m 644 a b
+      stat -L x
+    '';
+  };
+  b = pkgs.writeShellApplication {
+    name = "b";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = "stat -c %s x; install -D a b";
+  };
+}
+"#,
+    );
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "5:7:W:31:[undeclared_command] `stat -c` isn't portable: GNU and macOS stat have different options",
+            "6:7:W:31:[undeclared_command] `install -Dm644` isn't portable: macOS install lacks GNU's `-D`, `-t`, `-T`, `-Z` and long options",
+        ]
+    );
 }

@@ -264,7 +264,9 @@ functions, aliases and commands that run other commands like `sudo`,
   default path. Common host tools (`rm`, `mkdir`, `cat`, `cp`, `mv`, `grep`, `ln`, `chown`,
   `touch`, `which`, `locale`, `dirname`, `sudo`, `mktemp`, `chmod`, `sort`,
   `tail`, `head`, `cut`, `find`, `wc`, `sleep`, `tee`, `stat`, `basename`,
-  `date`, `hostname`) are always available. `sed -i` with the host's sed is reported when macOS is
+  `date`, `hostname`, `stat`, `install`) are always available, except GNU-only
+  options of the host's tool when macOS is checked: `stat -c`/`-f`...,
+  `install -D`/`-t`/`-T`/`-Z`/`--long`. `sed -i` with the host's sed is reported when macOS is
   checked (BSD sed needs `-i ''`, which GNU sed rejects; `-i.bak` works on
   both). When declarations can't be
   known (`imports`, computed lists) nothing is reported.

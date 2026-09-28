@@ -25,6 +25,10 @@ pub fn parse_line(line: &str) -> Option<Directive> {
     }
     // `# reason` after the directives
     let rest = rest.split(" #").next().unwrap_or(rest);
+    // `# statix with ...` is prose: directives start with `key=value`
+    if !rest.split_whitespace().next()?.contains('=') {
+        return None;
+    }
     let mut d = Directive::default();
     for item in rest.split_whitespace() {
         let Some((key, value)) = item.split_once('=') else {
@@ -123,6 +127,7 @@ mod tests {
         assert!(d.unknown.is_empty());
         assert!(parse_line("# statixfoo").is_none());
         assert!(parse_line("# not statix").is_none());
+        assert!(parse_line("# statix with shellcheck, ruff").is_none());
         let bad = parse_line("# statix platform=darwin platforms=bsd").unwrap();
         assert_eq!(bad.unknown, ["platform=darwin", "platforms=bsd"]);
     }

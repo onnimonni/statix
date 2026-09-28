@@ -315,3 +315,26 @@ fn gnu_only_options_of_host_tools() {
         ]
     );
 }
+
+#[test]
+fn package_meta_platforms() {
+    let out = check(
+        r#"{ pkgs, lib, ... }:
+pkgs.stdenv.mkDerivation {
+  passthru.migrate = pkgs.writeShellApplication {
+    name = "m";
+    text = "install -Dm644 a b";
+  };
+  passthru.updateScript = pkgs.writeShellApplication {
+    name = "u";
+    text = "sed -i s/a/b/ x";
+  };
+  meta = { platforms = [ "x86_64-linux" ]; };
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "9:13:W:31:[undeclared_command] `sed -i` isn't portable: macOS sed needs `-i ''`, which GNU sed rejects"
+    );
+}

@@ -758,17 +758,50 @@ const NIXOS_OPTIONS: &[&str] = &[
 ];
 
 /// Platforms every script in the file of `node` runs on: Linux in a NixOS
-/// module.
+/// module or test; else the package's `meta.platforms` when the file has
+/// exactly one.
 pub fn file_platforms(node: &SyntaxNode) -> Option<Cond> {
-    bindings(&root_of(node))
-        .iter()
-        .any(|(path, _)| {
-            // config.* is stripped already; options.systemd... too
-            let path = path.strip_prefix(&["options".to_string()]).unwrap_or(path);
-            path.first()
-                .is_some_and(|p| NIXOS_OPTIONS.contains(&p.as_str()))
-        })
-        .then(|| Cond::Platform("linux".into()))
+    let root = root_of(node);
+    let nixos = bindings(&root).iter().any(|(path, _)| {
+        // config.* is stripped already; options.systemd... too
+        let path = path.strip_prefix(&["options".to_string()]).unwrap_or(path);
+        path.first()
+            .is_some_and(|p| NIXOS_OPTIONS.contains(&p.as_str()))
+    });
+    if nixos {
+        return Some(Cond::Platform("linux".into()));
+    }
+    // update scripts run on the maintainer's machine, not the package's
+    let in_update_script = node
+        .ancestors()
+        .filter_map(AttrpathValue::cast)
+        .any(|a| last_key(&a).as_deref() == Some("updateScript"));
+    if in_update_script {
+        return None;
+    }
+    let mut metas = root
+        .descendants()
+        .filter_map(AttrpathValue::cast)
+        .filter(|apv| {
+            // meta.platforms = ..., meta = { platforms = ...; }
+            let in_meta = |a: &AttrpathValue| {
+                a.attrpath().is_some_and(|p| {
+                    p.attrs()
+                        .any(|k| utils::attr_name(&k).as_deref() == Some("meta"))
+                })
+            };
+            last_key(apv).as_deref() == Some("platforms")
+                && apv
+                    .syntax()
+                    .ancestors()
+                    .filter_map(AttrpathValue::cast)
+                    .any(|a| in_meta(&a))
+        });
+    let only = metas.next()?;
+    if metas.next().is_some() {
+        return None;
+    }
+    only.value().map(|v| meta_platforms(&v))
 }
 
 /// Declarations for the shell script in `s`, or `None` when its context

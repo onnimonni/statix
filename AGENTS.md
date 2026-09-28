@@ -46,6 +46,7 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 - `[ -f ./x ]`/`[[ -x ./x ]]` guards make paths optional. After `cd`/`pushd`, relative paths aren't checked. `source`/`.` or a bare `${snippet}` command means functions are unknown: don't report undeclared commands.
 - Only whole scripts are checked for undeclared commands: pieces of `+` concatenations, `concatStrings*` and multi-item lists are fragments (command positions and functions unknown). Strings in `mkIf` conditions or other non-value positions aren't scripts.
 - Files setting NixOS-only options (`systemd`, `boot`, `security`, `networking`, `fileSystems`, `hardware`, `virtualisation`, also under `options.`) are NixOS modules: their scripts run on Linux only.
+- Otherwise a file's single `meta.platforms` applies to its scripts, except `updateScript` (runs on the maintainer's machine). NixOS tests (`nodes`, `testScript`) are Linux.
 - Scripts without declarations (writeShellScript, stdenv phases) still get the absolute-path and interpolated-program checks.
 - Check absolute and relative command paths too: absolute paths outside `/nix/store` are host dependencies (except `/bin/sh`, `/usr/bin/env`); relative paths in devenv scripts must exist relative to the project root.
 - Verify interpolated commands exist: `${pkgs.X}/bin/Y`, `${pkgs.X}/sbin/Y`, `${lib.getExe' pkgs.X "Y"}`. Don't guess `lib.getExe` (`meta.mainProgram` can name any binary).

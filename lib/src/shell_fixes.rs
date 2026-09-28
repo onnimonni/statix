@@ -169,7 +169,7 @@ pub fn hint(code: u32) -> Option<&'static str> {
             "Iterate with a glob (for f in dir/*) or find -print0 | while IFS= read -r -d '' f."
         }
         1010 => {
-            "Put `;` or a newline before `done`/`fi`, or quote the word if it is meant literally."
+            "A keyword like `done`/`fi` appears where a word is expected. If it's meant as text (`echo done`), quote it: `echo 'done'`. Only if it should end a loop/if, put `;` or a newline before it. Change nothing else."
         }
         _ => return None,
     })

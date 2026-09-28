@@ -12,7 +12,7 @@ Fix by editing the file:
 
 `shellcheck` findings are in shell scripts written as Nix strings. Keep `${...}` interpolations as they are. In `''...''` strings write `''${` for a literal `${` and `'''` for `''`; in `"..."` strings escape `"` and `\` and write `\${` for a literal `${`.
 
-Afterwards re-run `statix fix <temp_file_path>` and `statix check -o agent <temp_file_path>` until nothing is left.
+Change only what each finding points at and keep what the code does the same. Afterwards re-run `statix fix <temp_file_path>` and `statix check -o agent <temp_file_path>` until nothing is left.
 
 ## 1. <temp_file_path>:3:9 [shellcheck] SC2046: Quote this to prevent word splitting.
 

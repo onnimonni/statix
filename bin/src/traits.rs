@@ -180,7 +180,8 @@ fn write_agent<T: Write>(
     }
     writeln!(
         writer,
-        "Afterwards re-run `statix fix {path}` and `statix check -o agent {path}` until nothing is left.\n"
+        "Change only what each finding points at and keep what the code does the same. \
+Afterwards re-run `statix fix {path}` and `statix check -o agent {path}` until nothing is left.\n"
     )?;
     for (i, (l, c, report, d)) in manual.iter().enumerate() {
         let severity = match report.severity {
@@ -195,13 +196,12 @@ fn write_agent<T: Write>(
             report.name,
             d.message
         )?;
-        let help = d.help.clone().unwrap_or_else(|| {
-            format!(
-                "{}. Run `statix explain W{:02}` for details.",
-                report.note, report.code
-            )
-        });
-        writeln!(writer, "Severity: {severity}\n\nHow to fix: {help}\n")?;
+        writeln!(writer, "Severity: {severity}\n")?;
+        match (&d.help, lint_docs(report.code)) {
+            (Some(help), _) => writeln!(writer, "How to fix: {help}\n")?,
+            (None, Some(docs)) => writeln!(writer, "{docs}\n")?,
+            (None, None) => writeln!(writer, "How to fix: {}.\n", report.note)?,
+        }
         writeln!(writer, "```nix")?;
         let first = l.saturating_sub(CONTEXT).max(1);
         let last = (l + CONTEXT).min(lines.len());
@@ -212,6 +212,17 @@ fn write_agent<T: Write>(
         writeln!(writer, "```\n")?;
     }
     Ok(())
+}
+
+/// The "Why is this bad?" and "Example" parts of a lint's documentation.
+fn lint_docs(code: u32) -> Option<String> {
+    let docs = crate::utils::lint_map()
+        .values()
+        .flatten()
+        .find(|l| l.code() == code)?
+        .explanation();
+    let why = docs.find("## Why is this bad?")?;
+    Some(docs[why..].replace("## ", "### ").trim().to_string())
 }
 
 mod json {

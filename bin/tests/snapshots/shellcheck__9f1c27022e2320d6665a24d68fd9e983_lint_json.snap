@@ -94,7 +94,7 @@ stdenv.mkDerivation { installPhase = ''
           "message": "`mkdir -p` + `cp` can be one `install`",
           "suggestion": null,
           "fixable": false,
-          "help": "Use `install -D $src/tool $out/bin/tool`. It sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files."
+          "help": "Use `install -D $src/tool $out/bin/tool`. `install` sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files."
         }
       ]
     }

@@ -3,7 +3,13 @@
 //! `mkdir -p d; cp src d/x; chmod 755 d/x; chown u d/x` is one
 //! `install -Dm755 -o u src d/x`.
 
-use super::commands::{Commands, Simple};
+use super::{
+    commands::{Commands, RedirectKind, Simple},
+    nixstr::PLACEHOLDER,
+};
+
+/// `install` without `-m` sets mode 755 where `cp` keeps the source's.
+const MODE_NOTE: &str = "`install` sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files.";
 
 /// A sequence of commands with a shorter equivalent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,8 +20,10 @@ pub struct Idiom {
     /// The replacement: literal text and script words (byte ranges), so it
     /// can be rendered from the script or from the Nix source.
     pub replacement: Vec<Piece>,
-    /// The commands replaced, for the message (`mkdir -p` + `cp` + `chmod`).
-    pub replaced: Vec<&'static str>,
+    /// What can be shorter, e.g. "`mkdir -p` + `cp` can be one `install`".
+    pub message: String,
+    /// Caveat for suggestions that aren't exact.
+    pub note: Option<&'static str>,
     /// Whether the replacement does exactly the same, words in the same
     /// order. Without `chmod`, `install` sets mode 755 where `cp` keeps the
     /// source's mode.
@@ -48,7 +56,12 @@ impl Idiom {
 #[must_use]
 pub fn idioms(text: &str, commands: &Commands, gnu: bool) -> Vec<Idiom> {
     let mut out = Vec::new();
+    for stages in &commands.pipelines {
+        out.extend(useless_cat(text, stages));
+        out.extend(tee_to_null(text, stages));
+    }
     for seq in &commands.sequences {
+        out.extend(cd_and_back(seq));
         let mut i = 0;
         while i < seq.len() {
             // `mkdir -p d` just before: `d` is a directory
@@ -61,6 +74,152 @@ pub fn idioms(text: &str, commands: &Commands, gnu: bool) -> Vec<Idiom> {
                 None => i += 1,
             }
         }
+    }
+    out.sort_by_key(|i| i.start);
+    out
+}
+
+/// Whether words in `text[a..b]` and `text[c..d]` can swap places in a fix:
+/// `${...}` placeholders are put back in order, so not when both have one.
+fn can_reorder(text: &str, a: (usize, usize), b: (usize, usize)) -> bool {
+    let has = |(s, e): (usize, usize)| text.get(s..e).is_none_or(|t| t.contains(PLACEHOLDER));
+    !(has(a) && has(b))
+}
+
+/// `cat FILE | cmd` is `cmd < FILE`.
+fn useless_cat(text: &str, stages: &[Simple]) -> Option<Idiom> {
+    let [cat, next, ..] = stages else { return None };
+    let file = match (cat.word(0), cat.words.as_slice()) {
+        (Some("cat"), [_, (_, s, e)]) => (*s, *e),
+        _ => return None,
+    };
+    let raw = text.get(file.0..file.1)?;
+    if !cat.redirects.is_empty()
+        || cat.other
+        || next.other
+        || raw.starts_with('-')
+        || raw.contains(['*', '?', '['])
+        // `cmd < other`: two inputs
+        || next.redirects.iter().any(|r| r.kind == RedirectKind::Read || r.fd == Some(0))
+    {
+        return None;
+    }
+    Some(Idiom {
+        start: cat.start(),
+        end: next.span.1,
+        replacement: vec![
+            Piece::Word(next.span.0, next.span.1),
+            Piece::Text(" < ".into()),
+            Piece::Word(file.0, file.1),
+        ],
+        // `${pkgs.postgresql}/bin/psql`: psql
+        message: format!(
+            "`cat` only feeds `{}`: read the file directly",
+            next.word(0).map_or("the command", basename)
+        ),
+        note: None,
+        exact: can_reorder(text, file, next.span),
+    })
+}
+
+/// `echo X | tee FILE > /dev/null` is `echo X > FILE` (`tee -a`: `>>`).
+fn tee_to_null(text: &str, stages: &[Simple]) -> Option<Idiom> {
+    let [echo, tee] = stages else { return None };
+    if !matches!(echo.word(0), Some("echo" | "printf")) || !echo.redirects.is_empty() || echo.other
+    {
+        return None;
+    }
+    let (append, file) = match (tee.word(0), tee.word(1), tee.words.as_slice()) {
+        (Some("tee"), Some("-a"), [_, _, (_, s, e)]) => (true, (*s, *e)),
+        (Some("tee"), _, [_, (_, s, e)]) => (false, (*s, *e)),
+        _ => return None,
+    };
+    if text.get(file.0..file.1)?.starts_with('-') || tee.other {
+        return None;
+    }
+    // tee's own output goes nowhere
+    let [r] = tee.redirects.as_slice() else {
+        return None;
+    };
+    if r.kind != RedirectKind::Write
+        || r.fd.is_some_and(|fd| fd != 1)
+        || r.target.0.as_deref() != Some("/dev/null")
+    {
+        return None;
+    }
+    let op = if append { " >> " } else { " > " };
+    Some(Idiom {
+        start: echo.start(),
+        end: tee.span.1,
+        replacement: vec![
+            Piece::Word(echo.span.0, echo.span.1),
+            Piece::Text(op.into()),
+            Piece::Word(file.0, file.1),
+        ],
+        message: format!(
+            "`{}` into `tee` whose output is discarded is a redirection",
+            echo.word(0).unwrap_or("echo")
+        ),
+        note: None,
+        exact: true,
+    })
+}
+
+/// `cd X; ...; cd ..` (or `cd -`): a subshell `(cd X && ...)` comes back
+/// even when a command fails.
+fn cd_and_back(seq: &[Simple]) -> Vec<Idiom> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < seq.len() {
+        let dir = match (seq[i].word(0), seq[i].words.as_slice()) {
+            (Some("cd"), [_, (Some(d), _, _)]) if !d.starts_with('-') && !d.contains("..") => {
+                d.clone()
+            }
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let depth = dir
+            .trim_end_matches('/')
+            .split('/')
+            .filter(|c| !c.is_empty() && *c != ".")
+            .count();
+        let back = seq[i + 1..].iter().position(|c| {
+            // `cd -` from anywhere, `cd ../..` from a relative directory
+            c.word(0) == Some("cd")
+                && matches!(c.word(1), Some(b) if b == "-"
+                    || !dir.starts_with('/')
+                        && b.trim_end_matches('/').split('/').all(|p| p == "..")
+                        && b.trim_end_matches('/').split('/').count() == depth)
+        });
+        let Some(back) = back.map(|b| i + 1 + b) else {
+            i += 1;
+            continue;
+        };
+        // another cd in between: where `cd ..` goes isn't clear
+        if back == i + 1 || seq[i + 1..back].iter().any(|c| c.word(0) == Some("cd")) {
+            i = back + 1;
+            continue;
+        }
+        let mut pieces = vec![
+            Piece::Text("(".into()),
+            Piece::Word(seq[i].start(), seq[i].end()),
+        ];
+        for c in &seq[i + 1..back] {
+            pieces.push(Piece::Text(" && ".into()));
+            pieces.push(Piece::Word(c.start(), c.end()));
+        }
+        pieces.push(Piece::Text(")".into()));
+        out.push(Idiom {
+            start: seq[i].start(),
+            end: seq[back].end(),
+            replacement: pieces,
+            message: "`cd` there and back: use a subshell".into(),
+            note: Some("The subshell returns to the directory even when a command fails; variables it sets don't survive it."),
+            exact: false,
+        });
+        i = back + 1;
     }
     out
 }
@@ -105,8 +264,13 @@ fn attribute<'a>(text: &'a str, c: &Simple) -> Option<(&'static str, &'a str, St
         return None;
     }
     let command = match c.word(0)? {
-        // numeric modes only: `install -m +x` isn't `chmod +x`
-        "chmod" if value.bytes().all(|b| b.is_ascii_digit()) => "chmod",
+        // numeric modes; `+x` is suggested as 755 (not exact)
+        "chmod"
+            if value.bytes().all(|b| b.is_ascii_digit())
+                || matches!(*value, "+x" | "a+x" | "u+x" | "ugo+x") =>
+        {
+            "chmod"
+        }
         "chown" => "chown",
         "chgrp" => "chgrp",
         _ => return None,
@@ -197,13 +361,18 @@ fn install(
     }
     replaced.push("cp");
     let (mut mode, mut owner, mut group) = (None, None, None);
+    // `chmod +x` adds to the mode: `-m 755` is close, not the same
+    let mut symbolic = false;
     while let Some((command, value, target)) = seq.get(i).and_then(|c| attribute(text, c)) {
         // `cp x dir; chmod 755 dir` is the directory's mode
         if file.as_deref() != Some(target.as_str()) && (into_dir || target != dst) {
             break;
         }
         match command {
-            "chmod" if mode.is_none() => mode = Some(value),
+            "chmod" if mode.is_none() => {
+                symbolic = value.contains('x');
+                mode = Some(if symbolic { "755" } else { value });
+            }
             "chown" if owner.is_none() && group.is_none() => match value.split_once(':') {
                 Some((u, g)) => {
                     owner = Some(u);
@@ -278,8 +447,15 @@ fn install(
             start: commands[0].start(),
             end: commands[i - 1].end(),
             replacement: pieces,
-            replaced,
-            exact: mode.is_some() && !reordered && only_separators(text, commands),
+            message: format!("`{}` can be one `install`", replaced.join("` + `")),
+            note: match (mode, symbolic) {
+                (None, _) => Some(MODE_NOTE),
+                (Some(_), true) => Some(
+                    "`chmod +x` adds to the file's mode; `-m 755` sets it: check that's the mode you want.",
+                ),
+                _ => None,
+            },
+            exact: mode.is_some() && !symbolic && !reordered && only_separators(text, commands),
         },
         i,
     ))
@@ -298,6 +474,33 @@ mod tests {
                 (text.unwrap(), i.exact)
             })
             .collect()
+    }
+
+    #[test]
+    fn pipelines_and_cd() {
+        let s = |x: &str| x.to_string();
+        assert_eq!(
+            suggest("cat data.json | jq -r .name > out\n", true),
+            [(s("jq -r .name > out < data.json"), true)]
+        );
+        assert!(suggest("cat a b | sort\n", true).is_empty());
+        assert!(suggest("cat x | sort < y\n", true).is_empty());
+        assert_eq!(
+            suggest("echo \"$v\" | tee -a log > /dev/null\n", true),
+            [(s("echo \"$v\" >> log"), true)]
+        );
+        assert!(suggest("echo x | tee log\n", true).is_empty());
+        assert!(suggest("echo x | sudo tee /etc/x > /dev/null\n", true).is_empty());
+        assert_eq!(
+            suggest("cd build\nmake\nmake install\ncd ..\n", true),
+            [(s("(cd build && make && make install)"), false)]
+        );
+        assert_eq!(
+            suggest("cd a/b; make; cd ../..", true),
+            [(s("(cd a/b && make)"), false)]
+        );
+        assert!(suggest("cd a/b; make; cd ..", true).is_empty());
+        assert_eq!(suggest("cd /tmp; make; cd -; cd x; cd ..", true).len(), 1);
     }
 
     #[test]
@@ -345,8 +548,12 @@ mod tests {
             suggest("cp x y\n# make it executable\nchmod 755 y\n", true),
             [(s("install -m 755 x y"), false)]
         );
-        // symbolic modes are relative to the file's mode
-        assert!(suggest("cp x y\nchmod +x y\n", true).is_empty());
+        // `chmod +x` adds to the mode: a hint for 755
+        assert_eq!(
+            suggest("cp x y\nchmod +x y\n", true),
+            [(s("install -m 755 x y"), false)]
+        );
+        assert!(suggest("cp x y\nchmod g+w y\n", true).is_empty());
         // unrelated or not worth it
         assert!(suggest("mkdir -p a\ncp x b/x\n", true).is_empty());
         assert!(suggest("cp -r x y\nchmod 755 y\n", true).is_empty());

@@ -145,6 +145,8 @@ pub struct Commands {
     /// Runs of simple commands executed one after another (`a; b`, `a && b`,
     /// lines), without redirections, for suggesting shorter idioms.
     pub sequences: Vec<Vec<Simple>>,
+    /// Pipelines of simple commands (`a | b`).
+    pub pipelines: Vec<Vec<Simple>>,
     /// Files written with text known before the script runs:
     /// `cat > x.json <<'EOF'`, `echo '{}' > x.json`.
     pub writes: Vec<Write>,
@@ -155,6 +157,33 @@ pub struct Commands {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Simple {
     pub words: Vec<(Option<String>, usize, usize)>,
+    /// File redirections (`> f`, `>> f`, `< f`).
+    pub redirects: Vec<Redirect>,
+    /// Anything else than words and file redirections (`VAR=x`,
+    /// here-documents, process substitution): not a plain command.
+    pub other: bool,
+    /// Byte range of the whole command, redirections included.
+    pub span: (usize, usize),
+}
+
+/// A file redirection of a simple command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redirect {
+    pub fd: Option<u32>,
+    pub kind: RedirectKind,
+    /// The target's static text and byte range.
+    pub target: (Option<String>, usize, usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedirectKind {
+    /// `>`, `>|`
+    Write,
+    /// `>>`
+    Append,
+    /// `<`
+    Read,
+    Other,
 }
 
 impl Simple {
@@ -363,7 +392,11 @@ impl Walker {
                 self.pipeline(pipeline, src);
                 let single = pipeline.seq.len() == 1 && !pipeline.bang;
                 match self.last_simple.take() {
-                    Some(simple) if single && sequential => run.push(simple),
+                    Some(simple)
+                        if single && sequential && simple.redirects.is_empty() && !simple.other =>
+                    {
+                        run.push(simple);
+                    }
                     _ => flush(run, &mut self.out),
                 }
             }
@@ -374,8 +407,18 @@ impl Walker {
     }
 
     fn pipeline(&mut self, pipeline: &ast::Pipeline, src: &Source) {
+        let mut stages = Vec::new();
         for command in &pipeline.seq {
+            self.last_simple = None;
             self.command(command, src);
+            stages.push(self.last_simple.take());
+        }
+        if stages.len() == 1 {
+            self.last_simple = stages.pop().flatten();
+        } else if !pipeline.bang
+            && let Some(stages) = stages.into_iter().collect::<Option<Vec<_>>>()
+        {
+            self.out.pipelines.push(stages);
         }
     }
 
@@ -680,17 +723,69 @@ impl Walker {
             self.static_write(simple, &args, src);
         }
         self.invocation(&args, Lookup::Any, src);
-        let redirected = simple
+        if src.clamp.is_some() || src.depth > 0 || args.is_empty() {
+            return;
+        }
+        let mut redirects = Vec::new();
+        let mut other = false;
+        let items = simple
             .prefix
             .iter()
             .flat_map(|p| &p.0)
-            .chain(simple.suffix.iter().flat_map(|s| &s.0))
-            .any(|i| !matches!(i, CommandPrefixOrSuffixItem::Word(_)));
-        self.last_simple = (src.clamp.is_none() && src.depth == 0 && !redirected).then(|| Simple {
+            .chain(simple.suffix.iter().flat_map(|s| &s.0));
+        for item in items {
+            match item {
+                CommandPrefixOrSuffixItem::Word(_) => {}
+                CommandPrefixOrSuffixItem::IoRedirect(IoRedirect::File(
+                    fd,
+                    kind,
+                    IoFileRedirectTarget::Filename(w),
+                )) => {
+                    let kind = match kind {
+                        ast::IoFileRedirectKind::Write | ast::IoFileRedirectKind::Clobber => {
+                            RedirectKind::Write
+                        }
+                        ast::IoFileRedirectKind::Append => RedirectKind::Append,
+                        ast::IoFileRedirectKind::Read => RedirectKind::Read,
+                        _ => RedirectKind::Other,
+                    };
+                    let target = w.loc.as_ref().map_or((None, 0, 0), |loc| {
+                        (
+                            Some(w.value.clone()),
+                            src.byte(loc.start.index),
+                            src.byte(loc.end.index),
+                        )
+                    });
+                    redirects.push(Redirect {
+                        fd: fd.and_then(|f| u32::try_from(f).ok()),
+                        kind,
+                        target,
+                    });
+                }
+                _ => other = true,
+            }
+        }
+        // `< in cmd`: redirections may come first
+        let start = redirects
+            .iter()
+            .map(|r| r.target.1)
+            .chain(args.first().map(|a| a.start))
+            .min()
+            .unwrap_or(0);
+        let end = redirects
+            .iter()
+            .map(|r| r.target.2)
+            .chain(args.last().map(|a| a.end))
+            .max()
+            .unwrap_or(start);
+        self.last_simple = Some(Simple {
             words: args
                 .iter()
                 .map(|a| (a.text.clone(), a.start, a.end))
                 .collect(),
+            redirects,
+            other,
+            span: (start, end),
         });
     }
 

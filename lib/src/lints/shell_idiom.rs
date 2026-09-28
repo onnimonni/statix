@@ -110,7 +110,10 @@ impl Rule for ShellIdiom {
             return None;
         };
         // cheap check before parsing
-        if !script.text.contains("cp ") {
+        if !["cp ", "cat ", "tee ", "cd "]
+            .iter()
+            .any(|c| script.text.contains(c))
+        {
             return None;
         }
         let gnu = gnu_coreutils(&s, kind);
@@ -142,13 +145,10 @@ impl Rule for ShellIdiom {
             let Some(shown) = idiom.render(nix_word) else {
                 continue;
             };
-            let message = format!("`{}` can be one `install`", idiom.replaced.join("` + `"));
-            let help = if idiom.exact {
-                format!("Use `{shown}`.")
-            } else {
-                format!(
-                    "Use `{shown}`. It sets mode 755 unless given `-m`, where `cp` keeps the source's mode: add `-m 644` for data files."
-                )
+            let message = idiom.message.clone();
+            let help = match idiom.note {
+                Some(caveat) => format!("Use `{shown}`. {caveat}"),
+                None => format!("Use `{shown}`."),
             };
             report = match (&fixed, idiom.exact, suggested) {
                 (Some(fixed), true, false) => {

@@ -11,7 +11,7 @@ fn check(nix: &str) -> String {
 
     let linux = root.join("linux.tsv");
     let darwin = root.join("darwin.tsv");
-    let common = "jq\tbin\tjq\ncurl\tbin\tcurl\nripgrep\tout\trg\ncoreutils\tout\tls\ncoreutils\tout\tcat\ncoreutils\tout\tuname\npnpm\tout\tpnpm\nnodejs\tout\tnode\ngit\tout\tgit\ngnused\tout\tsed\n";
+    let common = "jq\tbin\tjq\ncurl\tbin\tcurl\nripgrep\tout\trg\ncoreutils\tout\tls\ncoreutils\tout\tcat\ncoreutils\tout\tuname\ncoreutils\tout\tchroot\npnpm\tout\tpnpm\nnodejs\tout\tnode\ngit\tout\tgit\ngnused\tout\tsed\n";
     fs::write(
         &linux,
         format!("{common}strace\tout\tstrace\nxclip\tout\txclip\n"),
@@ -264,4 +264,23 @@ fn sed_in_place_on_darwin() {
             "12:13:W:31:[undeclared_command] `sed` isn't declared",
         ]
     );
+}
+
+#[test]
+fn runtime_inputs_platforms_and_chroot() {
+    // strace is Linux only: so is a script with it in runtimeInputs
+    let out = check(
+        r#"{ pkgs, ... }: {
+  a = pkgs.writeShellApplication {
+    name = "a";
+    runtimeInputs = [ pkgs.strace pkgs.coreutils ];
+    text = ''
+      strace -f true
+      chroot /tmp/root /busybox uname
+    '';
+  };
+}
+"#,
+    );
+    assert_eq!(out, "");
 }

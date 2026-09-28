@@ -328,7 +328,12 @@ fn check(s: &ast::Str, script: &Script, shell: &str, declared: &Declared) -> Vec
         let finding = if name.contains(PLACEHOLDER) {
             check_interpolated(s, script, u, programs, &effective, at)
         } else if name.starts_with('/') {
-            check_absolute(name, at)
+            // `chroot DIR /busybox`: a path inside DIR
+            if u.via.iter().any(|r| r == "chroot") {
+                None
+            } else {
+                check_absolute(name, at)
+            }
         } else if name.contains('/') {
             check_relative(name, declared, commands.changes_dir, at)
         } else if opaque {
@@ -492,6 +497,11 @@ fn check_declared(
         .map(|(s, _)| s.clone())
         .filter(|s| undeclared.contains(s))
         .collect();
+    // runtimeInputs = [ pkgs.X ]: without X on a system, the script can't
+    // be built there either, so X can't be missing when it runs
+    if declared.place == "runtimeInputs" && unavailable_systems.len() == undeclared.len() {
+        return None;
+    }
     if let Some((_, attr)) = unavailable.first()
         && unavailable_systems.len() == undeclared.len()
     {

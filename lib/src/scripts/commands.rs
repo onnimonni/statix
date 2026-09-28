@@ -116,6 +116,8 @@ pub struct Use {
     pub lookup: Lookup,
     /// Its arguments' static text (`None` when dynamic).
     pub args: Vec<Option<String>>,
+    /// Commands running it (`sudo env x`: `["sudo", "env"]`).
+    pub via: Vec<String>,
 }
 
 /// Commands found in a script.
@@ -178,8 +180,7 @@ pub fn commands(text: &str, shell: &str) -> Commands {
     out.uses = raw
         .into_iter()
         // `sudo() { ...; }; sudo x`: x is an argument, not a command
-        .filter(|(_, via)| !via.iter().any(|runner| is_function(runner)))
-        .map(|(u, _)| u)
+        .filter(|u| !u.via.iter().any(|runner| is_function(runner)))
         .filter(|u| {
             let name = u.name.strip_prefix('\\').unwrap_or(&u.name);
             let builtin = builtins.contains(&name);
@@ -221,7 +222,7 @@ struct Walker {
     /// The whole script text.
     top: String,
     /// Uses, with the commands that run them (`sudo x`: `["sudo"]`).
-    raw: Vec<(Use, Vec<String>)>,
+    raw: Vec<Use>,
     /// Commands running the command being walked.
     via: Vec<String>,
     functions: HashSet<String>,
@@ -572,16 +573,14 @@ impl Walker {
             && !name.is_empty()
         {
             let (start, end) = src.clamp.unwrap_or((arg.start, arg.end));
-            self.raw.push((
-                Use {
-                    name: name.clone(),
-                    start,
-                    end,
-                    lookup,
-                    args: args.iter().map(|a| a.text.clone()).collect(),
-                },
-                self.via.clone(),
-            ));
+            self.raw.push(Use {
+                name: name.clone(),
+                start,
+                end,
+                lookup,
+                args: args.iter().map(|a| a.text.clone()).collect(),
+                via: self.via.clone(),
+            });
         }
     }
 

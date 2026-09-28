@@ -51,17 +51,38 @@ impl Idiom {
     }
 }
 
-/// Idioms in `commands` of the script `text`. `gnu`: GNU coreutils run it
-/// (build phases, devenv, NixOS), so `install -D` and `-t` work.
+/// Where a script runs.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Context {
+    /// GNU coreutils: `install -D`, `-t`.
+    pub gnu: bool,
+    /// A stdenv build phase or hook: setup.sh functions (`substituteInPlace`,
+    /// `installManPage`...) exist.
+    pub build: bool,
+}
+
+/// Idioms in `commands` of the script `text` running in `ctx`.
 #[must_use]
-pub fn idioms(text: &str, commands: &Commands, gnu: bool) -> Vec<Idiom> {
+pub fn idioms_in(text: &str, commands: &Commands, ctx: Context) -> Vec<Idiom> {
+    let gnu = ctx.gnu;
     let mut out = Vec::new();
     for stages in &commands.pipelines {
         out.extend(useless_cat(text, stages));
         out.extend(tee_to_null(text, stages));
+        out.extend(pipe_idioms(stages));
+    }
+    for c in &commands.simples {
+        out.extend(simple_idioms(text, c, ctx));
+    }
+    for u in &commands.uses {
+        out.extend(renamed_command(text, u));
+    }
+    for &(start, end) in &commands.ls_loops {
+        out.extend(ls_loop(text, start, end));
     }
     for seq in &commands.sequences {
         out.extend(cd_and_back(seq));
+        out.extend(guarded(seq));
         let mut i = 0;
         while i < seq.len() {
             // `mkdir -p d` just before: `d` is a directory
@@ -76,6 +97,395 @@ pub fn idioms(text: &str, commands: &Commands, gnu: bool) -> Vec<Idiom> {
         }
     }
     out.sort_by_key(|i| i.start);
+    out
+}
+
+/// A hint without a ready replacement.
+fn hint(start: usize, end: usize, message: String, note: &'static str) -> Idiom {
+    Idiom {
+        start,
+        end,
+        replacement: Vec::new(),
+        message,
+        note: Some(note),
+        exact: false,
+    }
+}
+
+/// `[text](start, words...)`: a replacement of literal text and words.
+fn pieces(parts: impl IntoIterator<Item = Piece>) -> Vec<Piece> {
+    parts.into_iter().collect()
+}
+
+/// Words `from..` of `c`, each preceded by a space.
+fn rest(c: &Simple, from: usize) -> Vec<Piece> {
+    c.words
+        .iter()
+        .skip(from)
+        .flat_map(|w| [Piece::Text(" ".into()), Piece::Word(w.1, w.2)])
+        .collect()
+}
+
+/// `egrep`/`fgrep` are obsolete names of `grep -E`/`grep -F`.
+fn renamed_command(text: &str, u: &super::commands::Use) -> Option<Idiom> {
+    // `$(which x)`: `$(command -v x)`
+    if u.name == "which" {
+        let before = text.get(..u.start)?;
+        if !(before.ends_with("$(") || before.ends_with('`')) {
+            return None;
+        }
+        return Some(Idiom {
+            start: u.start,
+            end: u.end,
+            replacement: vec![Piece::Text("command -v".into())],
+            message: "`which` to find a command: `command -v`".into(),
+            note: Some(
+                "`command -v` is POSIX and built into the shell; `which` is an external program that may not be installed. It also finds functions and builtins.",
+            ),
+            exact: false,
+        });
+    }
+    let new = match u.name.as_str() {
+        "egrep" => "grep -E",
+        "fgrep" => "grep -F",
+        _ => return None,
+    };
+    // the word as written is the name (not `\egrep`, not a path)
+    if text.get(u.start..u.end)? != u.name {
+        return None;
+    }
+    Some(Idiom {
+        start: u.start,
+        end: u.end,
+        replacement: vec![Piece::Text(new.into())],
+        message: format!("`{}` is an obsolete name for `{new}`", u.name),
+        note: None,
+        exact: true,
+    })
+}
+
+/// `grep | wc -l`, `sort | uniq`, `ls | grep`.
+fn pipe_idioms(stages: &[Simple]) -> Option<Idiom> {
+    fn words(c: &Simple) -> Vec<Option<&str>> {
+        c.words.iter().map(|w| w.0.as_deref()).collect()
+    }
+    let [a, b] = stages else { return None };
+    if a.other || b.other || !a.redirects.is_empty() {
+        return None;
+    }
+    let start = a.start();
+    let end = b.span.1;
+    match (words(a).as_slice(), words(b).as_slice()) {
+        ([Some("grep"), args @ ..], [Some("wc"), Some("-l")])
+            if !args
+                .iter()
+                .any(|w| matches!(w, Some("-c" | "-o" | "--count" | "--only-matching"))) =>
+        {
+            let mut r = pieces([Piece::Text("grep -c".into())]);
+            r.extend(rest(a, 1));
+            Some(Idiom {
+                start,
+                end: b.end(),
+                replacement: r,
+                message: "`grep | wc -l` counts matching lines: `grep -c`".into(),
+                note: Some("With several files `grep -c` prints a count per file."),
+                exact: false,
+            })
+        }
+        ([Some("sort"), ..], [Some("uniq")]) => {
+            let mut r = pieces([Piece::Text("sort -u".into())]);
+            r.extend(rest(a, 1));
+            Some(Idiom {
+                start,
+                end: b.end(),
+                replacement: r,
+                message: "`sort | uniq` is `sort -u`".into(),
+                note: Some(
+                    "`sort -u` compares lines with the locale's collation, `uniq` byte by byte: set `LC_ALL=C` if that matters.",
+                ),
+                exact: false,
+            })
+        }
+        ([Some("ls"), ..], [Some("grep"), ..]) => Some(hint(
+            start,
+            end,
+            "`ls | grep` to find files: use a glob".into(),
+            "`ls` output isn't meant to be parsed; a glob like `for f in dir/*.ext` handles every file name.",
+        )),
+        _ => None,
+    }
+}
+
+/// `grep ... > /dev/null`, `find ... -exec rm {} \;`, `echo $(cmd)`,
+/// `sed -i 's/a/b/'`, copies into man and completion directories.
+#[allow(clippy::too_many_lines)]
+fn simple_idioms(text: &str, c: &Simple, ctx: Context) -> Option<Idiom> {
+    let word = |i: usize| c.word(i);
+    let raw = |i: usize| c.words.get(i).and_then(|w| text.get(w.1..w.2));
+    let n = c.words.len();
+    match word(0)? {
+        // `grep x > /dev/null`: `grep -q x`
+        "grep"
+            if !c.other
+                && !c
+                    .words
+                    .iter()
+                    .any(|w| matches!(w.0.as_deref(), Some("-q" | "--quiet" | "-s")))
+                && c.redirects.len() == 1
+                && c.redirects.iter().all(|r| {
+                    r.kind == super::commands::RedirectKind::Write
+                        && r.fd.is_none_or(|fd| fd == 1)
+                        && r.target.0.as_deref() == Some("/dev/null")
+                }) =>
+        {
+            let mut r = pieces([Piece::Text("grep -q".into())]);
+            r.extend(rest(c, 1));
+            Some(Idiom {
+                start: c.start(),
+                end: c.span.1,
+                replacement: r,
+                message: "`grep` with its output discarded: `grep -q`".into(),
+                note: Some("`grep -q` stops at the first match."),
+                exact: false,
+            })
+        }
+        // `find ... -exec rm [-f] {} \;`: `-delete`
+        "find" if n >= 5 => {
+            let tail: Vec<Option<&str>> = c.words[n.saturating_sub(5)..]
+                .iter()
+                .map(|w| w.0.as_deref())
+                .collect();
+            let at = match tail.as_slice() {
+                [_, Some("-exec"), Some("rm"), Some("{}"), Some(";" | "+")] => n - 4,
+                [
+                    Some("-exec"),
+                    Some("rm"),
+                    Some("-f"),
+                    Some("{}"),
+                    Some(";" | "+"),
+                ] => n - 5,
+                _ => return None,
+            };
+            let (s, _) = (c.words[at].1, 0);
+            Some(Idiom {
+                start: s,
+                end: c.end(),
+                replacement: vec![Piece::Text("-delete".into())],
+                message: "`find -exec rm`: `find -delete`".into(),
+                note: Some(
+                    "`-delete` also removes empty directories that match, and implies `-depth`.",
+                ),
+                exact: false,
+            })
+        }
+        // `echo $(cmd)`: `cmd`
+        "echo" if n == 2 && c.redirects.is_empty() => {
+            let arg = raw(1)?;
+            let inner = arg
+                .strip_prefix('"')
+                .and_then(|a| a.strip_suffix('"'))
+                .unwrap_or(arg)
+                .strip_prefix("$(")?
+                .strip_suffix(')')?;
+            if inner.starts_with('(') || inner.contains(['(', ')', '`']) {
+                return None;
+            }
+            Some(Idiom {
+                start: c.start(),
+                end: c.end(),
+                replacement: vec![Piece::Text(inner.to_string())],
+                message: "`echo $(cmd)` prints what `cmd` prints: run `cmd`".into(),
+                note: Some(
+                    "`echo` joins lines and splits words unless quoted, and hides `cmd`'s exit status.",
+                ),
+                exact: false,
+            })
+        }
+        // `sed -i 's/a/b/g' f` in a build: `substituteInPlace`
+        "sed" if ctx.build && n == 4 && word(1) == Some("-i") => {
+            let script = word(2)?;
+            let body = script.strip_prefix("s/")?;
+            let [from, to, flags] = body.splitn(3, '/').collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            let literal = |t: &str| {
+                !t.is_empty()
+                    && !t.contains([
+                        '\\', '.', '*', '[', ']', '^', '$', '&', '\'', '+', '?', '(', ')', '{',
+                        '}', '|',
+                    ])
+            };
+            if !literal(from) || !(to.is_empty() || literal(to)) || !matches!(flags, "" | "g") {
+                return None;
+            }
+            let file = c.words.get(3)?;
+            Some(Idiom {
+                start: c.start(),
+                end: c.end(),
+                replacement: vec![
+                    Piece::Text("substituteInPlace ".into()),
+                    Piece::Word(file.1, file.2),
+                    Piece::Text(format!(" --replace-fail '{from}' '{to}'")),
+                ],
+                message: "`sed -i` with a literal replacement: `substituteInPlace`".into(),
+                note: Some(
+                    "`--replace-fail` fails the build when the text isn't there, so the patch can't silently stop applying; it replaces every occurrence, like `s///g`.",
+                ),
+                exact: false,
+            })
+        }
+        // copies into man pages and shell completions in a build
+        "cp" | "install" if ctx.build && n >= 3 => {
+            let dst = raw(n - 1)?;
+            let (helper, flag) = if dst.contains("share/man/man") {
+                ("installManPage", "")
+            } else if dst.contains("bash-completion/completions") {
+                ("installShellCompletion", " --bash")
+            } else if dst.contains("zsh/site-functions") {
+                ("installShellCompletion", " --zsh")
+            } else if dst.contains("fish/vendor_completions.d") {
+                ("installShellCompletion", " --fish")
+            } else {
+                return None;
+            };
+            let srcs: Vec<&(Option<String>, usize, usize)> = c.words[1..n - 1]
+                .iter()
+                .filter(|w| !w.0.as_deref().is_some_and(|t| t.starts_with('-')))
+                .collect();
+            if srcs.is_empty()
+                || c.words[1..n - 1].iter().any(|w| {
+                    w.0.as_deref().is_some_and(|t| {
+                        let mode = t.strip_prefix("-Dm").or_else(|| t.strip_prefix("-m"));
+                        t.starts_with('-')
+                            && t != "-D"
+                            && t != "-m"
+                            && !mode.is_some_and(|m| m.bytes().all(|b| b.is_ascii_digit()))
+                    })
+                })
+            {
+                return None;
+            }
+            // the helpers keep the file's name: not for `cp x.1 .../y.1`
+            let named = !dst.ends_with('/')
+                && !dst
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|d| {
+                        d.starts_with("man")
+                            || d == "completions"
+                            || d == "site-functions"
+                            || d == "vendor_completions.d"
+                    });
+            if named && srcs.len() == 1 {
+                let src = text.get(srcs[0].1..srcs[0].2)?;
+                if basename(&key(src)) != basename(&key(dst)) {
+                    return None;
+                }
+            }
+            let mut r = pieces([Piece::Text(format!("{helper}{flag}"))]);
+            for w in srcs.iter().filter(|w| {
+                !w.0.as_deref()
+                    .is_some_and(|t| t.bytes().all(|b| b.is_ascii_digit()))
+            }) {
+                r.push(Piece::Text(" ".into()));
+                r.push(Piece::Word(w.1, w.2));
+            }
+            Some(Idiom {
+                start: c.start(),
+                end: c.end(),
+                replacement: r,
+                message: format!(
+                    "Copying into `{}`: `{helper}`",
+                    if helper == "installManPage" {
+                        "share/man"
+                    } else {
+                        "completions"
+                    }
+                ),
+                note: Some(
+                    "Add `installShellFiles` to `nativeBuildInputs`. It picks the directory (and the `man` output), sets the mode and checks the file isn't empty.",
+                ),
+                exact: false,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// `for f in $(ls dir)`: `for f in dir/*`.
+fn ls_loop(text: &str, start: usize, end: usize) -> Option<Idiom> {
+    let word = text.get(start..end)?;
+    let inner = word
+        .strip_prefix("$(ls")
+        .and_then(|w| w.strip_suffix(')'))
+        .or_else(|| word.strip_prefix("`ls").and_then(|w| w.strip_suffix('`')))?
+        .trim();
+    // `$(ls)`, `$(ls dir)`: no options
+    if inner.starts_with('-') || inner.contains([' ', '$', '(', '`', '*']) {
+        return Some(hint(
+            start,
+            end,
+            "`for ... in $(ls ...)`: use a glob".into(),
+            "`ls` output splits file names with spaces; a glob (`dir/*`) doesn't.",
+        ));
+    }
+    let glob = if inner.is_empty() {
+        "*".to_string()
+    } else {
+        format!("{}/*", inner.trim_end_matches('/'))
+    };
+    Some(Idiom {
+        start,
+        end,
+        replacement: vec![Piece::Text(glob)],
+        message: "`for ... in $(ls ...)`: use a glob".into(),
+        note: Some(
+            "A glob keeps file names with spaces whole; the loop variable then has the directory prefix, and an empty directory leaves the pattern itself unless `nullglob` is set.",
+        ),
+        exact: false,
+    })
+}
+
+/// `[ -e f ] && rm f`: `rm -f f`; `[ ! -d d ] && mkdir d`: `mkdir -p d`.
+fn guarded(seq: &[Simple]) -> Vec<Idiom> {
+    let mut out = Vec::new();
+    for pair in seq.windows(2) {
+        let [test, cmd] = pair else { continue };
+        if !cmd.after_and {
+            continue;
+        }
+        let words: Vec<Option<&str>> = test.words.iter().map(|w| w.0.as_deref()).collect();
+        let (neg, op, path) = match words.as_slice() {
+            [Some("[" | "test"), Some("!"), Some(op), Some(p), ..] => (true, *op, *p),
+            [Some("[" | "test"), Some(op), Some(p), ..] => (false, *op, *p),
+            _ => continue,
+        };
+        let target = cmd.words.last().and_then(|w| w.0.as_deref());
+        let (replacement, message, note) = match (neg, op, cmd.word(0), cmd.words.len()) {
+            (false, "-e" | "-f" | "-L" | "-h", Some("rm"), 2) if target == Some(path) => (
+                "rm -f",
+                "`rm` only if it exists: `rm -f`",
+                "`rm -f` also removes a dangling symlink and doesn't fail when there's nothing to remove.",
+            ),
+            (true, "-d" | "-e", Some("mkdir"), 2) if target == Some(path) => (
+                "mkdir -p",
+                "`mkdir` only if it doesn't exist: `mkdir -p`",
+                "`mkdir -p` also creates missing parents.",
+            ),
+            _ => continue,
+        };
+        let last = cmd.words.last().map(|w| (w.1, w.2));
+        let Some((a, b)) = last else { continue };
+        out.push(Idiom {
+            start: test.start(),
+            end: cmd.end(),
+            replacement: vec![Piece::Text(format!("{replacement} ")), Piece::Word(a, b)],
+            message: message.into(),
+            note: Some(note),
+            exact: false,
+        });
+    }
     out
 }
 
@@ -467,13 +877,17 @@ mod tests {
     use crate::scripts::commands::commands;
 
     fn suggest(script: &str, gnu: bool) -> Vec<(String, bool)> {
-        idioms(script, &commands(script, "bash"), gnu)
-            .into_iter()
-            .map(|i| {
-                let text = i.render(|s, e| script.get(s..e).map(String::from));
-                (text.unwrap(), i.exact)
-            })
-            .collect()
+        idioms_in(
+            script,
+            &commands(script, "bash"),
+            Context { gnu, build: false },
+        )
+        .into_iter()
+        .map(|i| {
+            let text = i.render(|s, e| script.get(s..e).map(String::from));
+            (text.unwrap(), i.exact)
+        })
+        .collect()
     }
 
     #[test]
@@ -501,6 +915,88 @@ mod tests {
         );
         assert!(suggest("cd a/b; make; cd ..", true).is_empty());
         assert_eq!(suggest("cd /tmp; make; cd -; cd x; cd ..", true).len(), 1);
+    }
+
+    fn suggest_build(script: &str) -> Vec<(String, bool)> {
+        idioms_in(
+            script,
+            &commands(script, "bash"),
+            Context {
+                gnu: true,
+                build: true,
+            },
+        )
+        .into_iter()
+        .map(|i| {
+            let text = i.render(|s, e| script.get(s..e).map(String::from));
+            (text.unwrap(), i.exact)
+        })
+        .collect()
+    }
+
+    #[test]
+    fn more_idioms() {
+        let s = |x: &str| x.to_string();
+        assert_eq!(suggest("egrep -v x f", true), [(s("grep -E"), true)]);
+        assert_eq!(
+            suggest("if grep -w foo f > /dev/null; then :; fi", true),
+            [(s("grep -q -w foo f"), false)]
+        );
+        assert!(suggest("grep foo f > /dev/null 2>&1", true).is_empty());
+        assert_eq!(
+            suggest("n=$(grep x f | wc -l)", true),
+            [(s("grep -c x f"), false)]
+        );
+        assert_eq!(
+            suggest("sort a | uniq > b", true),
+            [(s("sort -u a"), false)]
+        );
+        assert_eq!(
+            suggest(r"find . -name '*.o' -exec rm {} \;", true),
+            [(s("-delete"), false)]
+        );
+        assert_eq!(
+            suggest("[ -e out.log ] && rm out.log", true),
+            [(s("rm -f out.log"), false)]
+        );
+        assert_eq!(
+            suggest("[ ! -d build ] && mkdir build", true),
+            [(s("mkdir -p build"), false)]
+        );
+        assert!(suggest("[ -e a ]; rm a", true).is_empty());
+        assert_eq!(
+            suggest("for f in $(ls patches); do echo $f; done", true),
+            [(s("patches/*"), false)]
+        );
+        assert_eq!(suggest("x=$(which jq)", true), [(s("command -v"), false)]);
+        assert_eq!(
+            suggest("echo \"$(date +%s)\"", true),
+            [(s("date +%s"), false)]
+        );
+        // build phases only
+        assert!(suggest("sed -i 's/foo/bar/g' Makefile", true).is_empty());
+        assert_eq!(
+            suggest_build("sed -i 's/foo/bar/g' Makefile"),
+            [(
+                s("substituteInPlace Makefile --replace-fail 'foo' 'bar'"),
+                false
+            )]
+        );
+        assert!(suggest_build("sed -i 's/fo.o/bar/' Makefile").is_empty());
+        assert_eq!(
+            suggest_build("cp doc/tool.1 $out/share/man/man1/"),
+            [(s("installManPage doc/tool.1"), false)]
+        );
+        assert_eq!(
+            suggest_build("install -Dm644 comp.bash $out/share/bash-completion/completions/tool"),
+            []
+        );
+        assert_eq!(
+            suggest_build(
+                "install -Dm644 tool.fish $out/share/fish/vendor_completions.d/tool.fish"
+            ),
+            [(s("installShellCompletion --fish tool.fish"), false)]
+        );
     }
 
     #[test]

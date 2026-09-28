@@ -7,3 +7,4 @@ source: bin/tests/shellcheck.rs
 ---
 <temp_file_path>>2:12:E:28:[shellcheck] SC2045: Iterating over ls output is fragile. Use globs.
 <temp_file_path>>2:17:E:28:[shellcheck] SC2035: Use ./*glob* or -- *glob* so names with dashes won't become options.
+<temp_file_path>>2:12:I:33:[shell_idiom] `for ... in $(ls ...)`: use a glob

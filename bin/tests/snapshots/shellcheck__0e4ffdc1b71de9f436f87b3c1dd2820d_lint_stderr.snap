@@ -14,3 +14,10 @@ source: bin/tests/shellcheck.rs
    │                 │       
    │                 ╰─────── SC2045: Iterating over ls output is fragile. Use globs.
 ───╯
+[shell_idiom] Advice: Shell commands with a shorter idiom
+   ╭─[ <temp_file_path>:2:12 ]
+   │
+ 2 │   for f in $(ls *.txt); do echo "$f"; done
+   │            ─────┬─────  
+   │                 ╰─────── for ... in $(ls ...): use a glob
+───╯

@@ -147,6 +147,10 @@ pub struct Commands {
     pub sequences: Vec<Vec<Simple>>,
     /// Pipelines of simple commands (`a | b`).
     pub pipelines: Vec<Vec<Simple>>,
+    /// Every top-level simple command, redirections included.
+    pub simples: Vec<Simple>,
+    /// `for x in $(ls ...)`: byte range of the `$(ls ...)` word.
+    pub ls_loops: Vec<(usize, usize)>,
     /// Files written with text known before the script runs:
     /// `cat > x.json <<'EOF'`, `echo '{}' > x.json`.
     pub writes: Vec<Write>,
@@ -164,6 +168,8 @@ pub struct Simple {
     pub other: bool,
     /// Byte range of the whole command, redirections included.
     pub span: (usize, usize),
+    /// Runs only if the command before succeeded (`a && b`).
+    pub after_and: bool,
 }
 
 /// A file redirection of a simple command.
@@ -233,6 +239,7 @@ pub fn commands(text: &str, shell: &str) -> Commands {
         raw: Vec::new(),
         via: Vec::new(),
         last_simple: None,
+        after_and: false,
         functions: HashSet::new(),
         aliases: HashSet::new(),
         out: Commands::default(),
@@ -300,6 +307,8 @@ struct Walker {
     via: Vec<String>,
     /// The last simple command walked, for [`Commands::sequences`].
     last_simple: Option<Simple>,
+    /// The next command runs after `&&`.
+    after_and: bool,
     functions: HashSet<String>,
     aliases: HashSet<String>,
     out: Commands,
@@ -387,8 +396,9 @@ impl Walker {
                     ast::AndOr::Or(p) => (p, false),
                 }),
             );
-            for (pipeline, sequential) in pipelines {
+            for (k, (pipeline, sequential)) in pipelines.enumerate() {
                 self.last_simple = None;
+                self.after_and = k > 0 && sequential;
                 self.pipeline(pipeline, src);
                 let single = pipeline.seq.len() == 1 && !pipeline.bang;
                 match self.last_simple.take() {
@@ -467,6 +477,15 @@ impl Walker {
             CompoundCommand::BraceGroup(group) => self.list(&group.list, src),
             CompoundCommand::Subshell(subshell) => self.list(&subshell.list, src),
             CompoundCommand::ForClause(for_clause) => {
+                if let Some([value]) = for_clause.values.as_deref()
+                    && let Some(loc) = &value.loc
+                    && src.clamp.is_none()
+                    && (value.value.starts_with("$(ls ") || value.value.starts_with("`ls "))
+                {
+                    self.out
+                        .ls_loops
+                        .push((src.byte(loc.start.index), src.byte(loc.end.index)));
+                }
                 for value in for_clause.values.iter().flatten() {
                     self.word(value, src);
                 }
@@ -723,7 +742,9 @@ impl Walker {
             self.static_write(simple, &args, src);
         }
         self.invocation(&args, Lookup::Any, src);
-        if src.clamp.is_some() || src.depth > 0 || args.is_empty() {
+        // `$(...)` nested commands have exact positions; `eval`/`bash -c`
+        // strings don't
+        if src.clamp.is_some() || args.is_empty() {
             return;
         }
         let mut redirects = Vec::new();
@@ -778,7 +799,7 @@ impl Walker {
             .chain(args.last().map(|a| a.end))
             .max()
             .unwrap_or(start);
-        self.last_simple = Some(Simple {
+        let simple = Simple {
             words: args
                 .iter()
                 .map(|a| (a.text.clone(), a.start, a.end))
@@ -786,7 +807,10 @@ impl Walker {
             redirects,
             other,
             span: (start, end),
-        });
+            after_and: std::mem::take(&mut self.after_and),
+        };
+        self.out.simples.push(simple.clone());
+        self.last_simple = Some(simple);
     }
 
     fn prefix_or_suffix(&mut self, item: &CommandPrefixOrSuffixItem, src: &Source) -> Option<Arg> {

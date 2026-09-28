@@ -58,6 +58,30 @@ source: bin/tests/shellcheck.rs
           "help": "See https://www.shellcheck.net/wiki/SC2035"
         }
       ]
+    },
+    {
+      "name": "shell_idiom",
+      "note": "Shell commands with a shorter idiom",
+      "code": 33,
+      "severity": "Hint",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 12
+            },
+            "to": {
+              "line": 2,
+              "column": 23
+            }
+          },
+          "message": "`for ... in $(ls ...)`: use a glob",
+          "suggestion": null,
+          "fixable": false,
+          "help": "`ls` output splits file names with spaces; a glob (`dir/*`) doesn't."
+        }
+      ]
     }
   ]
 }

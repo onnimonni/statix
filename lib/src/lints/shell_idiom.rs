@@ -48,12 +48,10 @@ use rowan::ast::AstNode as _;
 )]
 struct ShellIdiom;
 
-/// Whether GNU coreutils run the script: stdenv phases and `runCommand`,
-/// devenv (its stdenv), NixOS modules (Linux).
-fn gnu_coreutils(s: &ast::Str, kind: Kind) -> bool {
-    if kind == Kind::Hook {
-        return true;
-    }
+/// Where the script runs: GNU coreutils (stdenv phases and `runCommand`,
+/// devenv, NixOS modules) and whether setup.sh functions exist (stdenv
+/// phases, `runCommand`).
+fn context(s: &ast::Str, kind: Kind) -> idioms::Context {
     let node = s.syntax();
     let run_command = node
         .ancestors()
@@ -76,7 +74,11 @@ fn gnu_coreutils(s: &ast::Str, kind: Kind) -> bool {
     });
     let linux = declared::file_platforms(node)
         .is_some_and(|c| c == declared::Cond::Platform("linux".into()));
-    run_command || devenv || linux
+    let build = kind == Kind::Hook || run_command;
+    idioms::Context {
+        gnu: build || devenv || linux,
+        build,
+    }
 }
 
 /// 1-based (line, column in chars) of byte `at` in `text`.
@@ -109,15 +111,8 @@ impl Rule for ShellIdiom {
         let Lang::Shell(shell) = lang else {
             return None;
         };
-        // cheap check before parsing
-        if !["cp ", "cat ", "tee ", "cd "]
-            .iter()
-            .any(|c| script.text.contains(c))
-        {
-            return None;
-        }
-        let gnu = gnu_coreutils(&s, kind);
-        let found = idioms::idioms(&script.text, &commands::commands(&script.text, shell), gnu);
+        let ctx = context(&s, kind);
+        let found = idioms::idioms_in(&script.text, &commands::commands(&script.text, shell), ctx);
         if found.is_empty() {
             return None;
         }
@@ -146,9 +141,10 @@ impl Rule for ShellIdiom {
                 continue;
             };
             let message = idiom.message.clone();
-            let help = match idiom.note {
-                Some(caveat) => format!("Use `{shown}`. {caveat}"),
-                None => format!("Use `{shown}`."),
+            let help = match (shown.is_empty(), idiom.note) {
+                (true, Some(caveat)) => caveat.to_string(),
+                (false, Some(caveat)) => format!("Use `{shown}`. {caveat}"),
+                (_, None) => format!("Use `{shown}`."),
             };
             report = match (&fixed, idiom.exact, suggested) {
                 (Some(fixed), true, false) => {

@@ -261,7 +261,7 @@ functions, aliases and commands that run other commands like `sudo`,
   `scripts.<name>.packages`, enabled `languages`/`services`/modules and
   other `scripts` (a devenv script's name is a command in the others);
   `writeShellApplication` `runtimeInputs`; NixOS systemd `path` and its
-  default path. `rm` is always available. When declarations can't be
+  default path. `rm`, `mkdir`, `cat`, `cp` and `mv` are always available. When declarations can't be
   known (`imports`, computed lists) nothing is reported.
 - packages not available on a checked system: x86_64-linux,
   aarch64-linux and the system statix runs on, from

@@ -141,7 +141,7 @@ fn unknown_directive(unknown: &[String]) -> String {
 }
 
 /// Commands every host has, never reported.
-const ALWAYS_AVAILABLE: &[&str] = &["rm"];
+const ALWAYS_AVAILABLE: &[&str] = &["rm", "mkdir", "cat", "cp", "mv"];
 
 fn systems_text(systems: &[String]) -> String {
     systems.join(", ")

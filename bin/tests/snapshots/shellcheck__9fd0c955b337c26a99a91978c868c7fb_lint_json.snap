@@ -36,7 +36,8 @@ source: bin/tests/shellcheck.rs
               }
             },
             "fix": "\"cd \\\"$HOME\\\" && serve\""
-          }
+          },
+          "fixable": true
         }
       ]
     }

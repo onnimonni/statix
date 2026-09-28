@@ -27,71 +27,8 @@ source: bin/tests/devenv_exec_shebang.rs
             }
           },
           "message": "devenv runs `scripts.<name>.exec` with bash, this shebang is ignored; set `package` to choose the interpreter",
-          "suggestion": null
-        }
-      ]
-    },
-    {
-      "name": "shellcheck",
-      "note": "ShellCheck found issues in an inline shell script",
-      "code": 28,
-      "severity": "Error",
-      "diagnostics": [
-        {
-          "at": {
-            "from": {
-              "line": 3,
-              "column": 3
-            },
-            "to": {
-              "line": 3,
-              "column": 3
-            }
-          },
-          "message": "SC1073: Couldn't parse this function. Fix to allow more checks.",
-          "suggestion": null
-        },
-        {
-          "at": {
-            "from": {
-              "line": 3,
-              "column": 9
-            },
-            "to": {
-              "line": 3,
-              "column": 9
-            }
-          },
-          "message": "SC1065: Trying to declare parameters? Don't. Use () and refer to params as $1, $2..",
-          "suggestion": null
-        },
-        {
-          "at": {
-            "from": {
-              "line": 4,
-              "column": 1
-            },
-            "to": {
-              "line": 4,
-              "column": 1
-            }
-          },
-          "message": "SC1064: Expected a { to open the function definition.",
-          "suggestion": null
-        },
-        {
-          "at": {
-            "from": {
-              "line": 4,
-              "column": 1
-            },
-            "to": {
-              "line": 4,
-              "column": 1
-            }
-          },
-          "message": "SC1072:  Fix any mentioned problems and try again.",
-          "suggestion": null
+          "suggestion": null,
+          "fixable": false
         }
       ]
     }

@@ -15,16 +15,3 @@ source: bin/tests/devenv_exec_shebang.rs
    │ │           
    │ ╰─────────── devenv runs scripts.<name>.exec with bash, this shebang is ignored; set package to choose the interpreter
 ───╯
-[shellcheck] Error: ShellCheck found issues in an inline shell script
-   ╭─[ <temp_file_path>:3:3 ]
-   │
- 3 │   print(1)
-   │   │     │  │ 
-   │   ╰────────── SC1073: Couldn't parse this function. Fix to allow more checks.
-   │         │  │ 
-   │         ╰──── SC1065: Trying to declare parameters? Don't. Use () and refer to params as $1, $2..
-   │            │ 
-   │            ╰─ SC1064: Expected a { to open the function definition.
-   │            │ 
-   │            ╰─ SC1072:  Fix any mentioned problems and try again.
-───╯

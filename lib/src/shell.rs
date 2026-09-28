@@ -8,6 +8,11 @@ use rowan::ast::AstNode as _;
 /// and arithmetic.
 pub const PLACEHOLDER: &str = "__nix_interp__";
 
+/// How to edit a shell script that lives in a Nix string.
+pub const NIX_ESCAPING: &str = "`shellcheck` findings are in shell scripts written as Nix strings. \
+Keep `${...}` interpolations as they are. In `''...''` strings write `''${` for a literal `${` \
+and `'''` for `''`; in `\"...\"` strings escape `\"` and `\\` and write `\\${` for a literal `${`.";
+
 /// Source bytes a rendered char came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Src {

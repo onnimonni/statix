@@ -110,7 +110,35 @@ json and errfmt:
 ```shell
 statix check /path/to/dir -o json
 statix check /path/to/dir -o errfmt # singleline, easy to integrate with vim
+statix check /path/to/dir -o agent  # markdown with context and fix instructions, for coding agents
 ```
+
+### Shell scripts in Nix strings
+
+The `shellcheck` lint runs [ShellCheck](https://www.shellcheck.net)
+(needs `shellcheck` in `PATH`, or `STATIX_SHELLCHECK`) on shell
+scripts written as Nix strings: devenv `scripts`, `tasks`,
+`processes`, `enterShell` and `enterTest`, nixpkgs
+`writeShellScript`, `writeShellApplication`, `writers.writeBash` and
+friends, and `let` bindings used as or interpolated into those.
+Findings are reported at their position in the `.nix` file.
+
+`statix fix` applies ShellCheck's own fixes, plus built-in ones for
+SC2045, SC2115, SC2155 and SC2162, escaped correctly for `''...''`
+and `"..."` strings and leaving `${...}` interpolations alone. Every
+fix is re-parsed and checked to render exactly the script ShellCheck
+intended before it's applied.
+
+Everything else needs a decision. `-o agent` lists it with the
+surrounding source, a hint for common codes, a ShellCheck wiki link
+and the Nix escaping rules, so a coding agent can finish the job:
+
+```shell
+statix fix . && statix check -o agent .
+```
+
+In `-o json` every diagnostic has `fixable` (whether `statix fix`
+handles it) and, when it doesn't, a `help` text.
 
 ### Configuration
 

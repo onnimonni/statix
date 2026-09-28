@@ -26,7 +26,20 @@ source: bin/tests/shellcheck.rs
             }
           },
           "message": "SC2045: Iterating over ls output is fragile. Use globs.",
-          "suggestion": null
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 49
+              },
+              "to": {
+                "line": 3,
+                "column": 3
+              }
+            },
+            "fix": "''\n  for f in *.txt; do echo \"$f\"; done\n''"
+          },
+          "fixable": true
         },
         {
           "at": {
@@ -40,7 +53,9 @@ source: bin/tests/shellcheck.rs
             }
           },
           "message": "SC2035: Use ./*glob* or -- *glob* so names with dashes won't become options.",
-          "suggestion": null
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://www.shellcheck.net/wiki/SC2035"
         }
       ]
     }

@@ -28,7 +28,8 @@ source: bin/tests/impure_host_path.rs
             }
           },
           "message": "`/bin/bash` depends on the host system, use a package from nixpkgs instead",
-          "suggestion": null
+          "suggestion": null,
+          "fixable": false
         },
         {
           "at": {
@@ -42,7 +43,8 @@ source: bin/tests/impure_host_path.rs
             }
           },
           "message": "`/opt/homebrew/` depends on the host system, use a package from nixpkgs instead",
-          "suggestion": null
+          "suggestion": null,
+          "fixable": false
         },
         {
           "at": {
@@ -56,7 +58,8 @@ source: bin/tests/impure_host_path.rs
             }
           },
           "message": "`/usr/bin/` depends on the host system, use a package from nixpkgs instead",
-          "suggestion": null
+          "suggestion": null,
+          "fixable": false
         }
       ]
     }

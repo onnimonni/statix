@@ -24,7 +24,8 @@ source: bin/tests/hardcoded_store_path.rs
             }
           },
           "message": "Hardcoded store path, interpolate the package instead (e.g. `${pkgs.hello}`)",
-          "suggestion": null
+          "suggestion": null,
+          "fixable": false
         }
       ]
     }

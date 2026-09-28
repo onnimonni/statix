@@ -38,7 +38,8 @@ source: bin/tests/shellcheck.rs
               }
             },
             "fix": "''\n  echo \"$1\"\n''"
-          }
+          },
+          "fixable": true
         }
       ]
     }

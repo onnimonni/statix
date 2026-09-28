@@ -38,7 +38,8 @@ source: bin/tests/shellcheck.rs
               }
             },
             "fix": "''\n  echo \"''${GREETING}\"\n''"
-          }
+          },
+          "fixable": true
         }
       ]
     }

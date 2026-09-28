@@ -2,7 +2,7 @@
 source: bin/tests/shellcheck.rs
 ---
 pkgs.writeShellApplication { name = "x"; text = ''
-  rm -rf $DIR/*
+  rm -rf "$DIR"/*
 ''; }
 ---
 {
@@ -22,24 +22,10 @@ pkgs.writeShellApplication { name = "x"; text = ''
             },
             "to": {
               "line": 2,
-              "column": 16
+              "column": 18
             }
           },
           "message": "SC2115: Use \"${var:?}\" to ensure this never expands to /* .",
-          "suggestion": null
-        },
-        {
-          "at": {
-            "from": {
-              "line": 2,
-              "column": 10
-            },
-            "to": {
-              "line": 2,
-              "column": 14
-            }
-          },
-          "message": "SC2086: Double quote to prevent globbing and word splitting.",
           "suggestion": {
             "at": {
               "from": {
@@ -51,8 +37,9 @@ pkgs.writeShellApplication { name = "x"; text = ''
                 "column": 3
               }
             },
-            "fix": "''\n  rm -rf \"$DIR\"/*\n''"
-          }
+            "fix": "''\n  rm -rf \"''${DIR:?}\"/*\n''"
+          },
+          "fixable": true
         }
       ]
     }

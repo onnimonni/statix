@@ -24,7 +24,8 @@ source: bin/tests/impure_host_path.rs
             }
           },
           "message": "`/usr/local/` depends on the host system, use a package from nixpkgs instead",
-          "suggestion": null
+          "suggestion": null,
+          "fixable": false
         }
       ]
     }

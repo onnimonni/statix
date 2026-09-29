@@ -1,0 +1,15 @@
+---
+source: bin/tests/ruff.rs
+---
+{ nodes.web-server = { }; testScript = ''
+  import os
+  start_all()
+  web_server.wait_for_unit("nginx")
+  with subtest("x"):
+    machine.succeed("true")
+  undefined_helper()
+''; }
+---
+<temp_file_path>>2:3:W:29:[ruff] I001: Import block is un-sorted or un-formatted
+<temp_file_path>>2:10:W:29:[ruff] F401: `os` imported but unused
+<temp_file_path>>7:3:W:29:[ruff] F821: Undefined name `undefined_helper`

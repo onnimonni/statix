@@ -1,0 +1,7 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  n=$(awk -F: '{print $1' /etc/passwd)
+''; }
+---

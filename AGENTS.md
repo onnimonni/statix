@@ -83,3 +83,9 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 - Skip globs, `cp` options, symbolic modes, `$(...)`, `chmod` of the directory copied into.
 - Hints don't fail `statix check` and don't make a file unclean in the cache.
 - Idea lists from Codex and Fable (2026-09-29) drive further idioms; exact only when behaviour is identical and words keep their order (placeholders are put back in order). Nix build-helper idioms (`substituteInPlace`, `installShellFiles`, `runHook`) only in stdenv phases/`runCommand`.
+
+## `embedded_code` lint (W34) and NixOS test scripts
+
+- Inline programs in shell scripts: jq (compile only: `jq -n 'if false then (PROG\n) else empty end'` with the command's `--arg` names), awk (`gawk -o/dev/null`, parses without running), `python -c` (ruff, only syntax errors and F821: one-liners don't follow project style). Only static programs without `${...}`.
+- NixOS `testScript` (a `nodes`/`containers` sibling, or a `let testScript` resolved to Python) is Python with the driver's globals from `nixos/lib/test-driver` `test_symbols` plus node names prepended as one line; findings on it are dropped and lines shifted; no fixes. F821 is dropped when nodes aren't written out or a line starts with `${...}`. Python fragments aren't checked alone; syntax errors and B018 next to `${...}` are noise.
+- jq and gawk are in `statix-scripts` and the test inputs; their versions are part of the cache epoch.

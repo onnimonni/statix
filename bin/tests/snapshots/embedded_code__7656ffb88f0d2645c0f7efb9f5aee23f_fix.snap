@@ -1,0 +1,7 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  python3 -c 'import sys; print(undefined_name)'
+''; }
+---

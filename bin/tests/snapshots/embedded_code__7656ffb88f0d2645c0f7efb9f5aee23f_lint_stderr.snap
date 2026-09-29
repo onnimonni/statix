@@ -1,0 +1,21 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  python3 -c 'import sys; print(undefined_name)'
+''; }
+---
+[undeclared_command] Warning: Command in a shell script isn't declared or doesn't exist
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   python3 -c 'import sys; print(undefined_name)'
+   │   ───┬───  
+   │      ╰───── python3 isn't declared
+───╯
+[embedded_code] Warning: Error in a jq, awk or python program inside a shell script
+   ╭─[ <temp_file_path>:2:33 ]
+   │
+ 2 │   python3 -c 'import sys; print(undefined_name)'
+   │                                 ───────┬───────  
+   │                                        ╰───────── python: Undefined name undefined_name (F821)
+───╯

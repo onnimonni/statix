@@ -1,0 +1,9 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  n=$(awk -F: '{print $1' /etc/passwd)
+''; }
+---
+<temp_file_path>>2:3:W:28:[shellcheck] SC2034: n appears unused. Verify use (or export if used externally).
+<temp_file_path>>2:24:W:34:[embedded_code] awk: unexpected newline or end of string

@@ -74,6 +74,8 @@ in
               lib.makeBinPath [
                 pkgs.shellcheck
                 pkgs.ruff
+                pkgs.jq
+                pkgs.gawk
               ]
             } --set-default STATIX_PROGRAMS ${lib.escapeShellArg programs}
           '';

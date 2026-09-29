@@ -1,0 +1,9 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  python3 -c 'import sys; print(undefined_name)'
+''; }
+---
+<temp_file_path>>2:3:W:31:[undeclared_command] `python3` isn't declared
+<temp_file_path>>2:33:W:34:[embedded_code] python: Undefined name `undefined_name` (F821)

@@ -1,0 +1,9 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  jq -n '$a + $b' --arg a 1 --argjson b 2
+  jq "$filter" x
+  jq '.a.${attr}' x
+''; }
+---

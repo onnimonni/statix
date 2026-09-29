@@ -1,0 +1,25 @@
+---
+source: bin/tests/ruff.rs
+---
+{ nodes.web-server = { }; testScript = ''
+  import os
+  start_all()
+  web_server.wait_for_unit("nginx")
+  with subtest("x"):
+    machine.succeed("true")
+  undefined_helper()
+''; }
+---
+[ruff] Warning: ruff found issues in an inline Python script
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   import os
+   │   ────┬───┬  
+   │       ╰────── I001: Import block is un-sorted or un-formatted
+   │           │  
+   │           ╰── F401: os imported but unused
+   │ 
+ 7 │   undefined_helper()
+   │   ────────┬───────  
+   │           ╰───────── F821: Undefined name undefined_helper
+───╯

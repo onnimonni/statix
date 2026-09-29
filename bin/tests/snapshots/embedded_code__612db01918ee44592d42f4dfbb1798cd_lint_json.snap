@@ -1,0 +1,60 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  jq '.items[] | .name,' data.json
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "undeclared_command",
+      "note": "Command in a shell script isn't declared or doesn't exist",
+      "code": 31,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 5
+            }
+          },
+          "message": "`jq` isn't declared",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Add the package providing `jq` to `packages`. If the environment provides it, add `# statix provided=jq` at the top of the script (or `provided = [ \"jq\" ]` in statix.toml); if it's optional, check for it with `command -v jq`."
+        }
+      ]
+    },
+    {
+      "name": "embedded_code",
+      "note": "Error in a jq, awk or python program inside a shell script",
+      "code": 34,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 7
+            },
+            "to": {
+              "line": 2,
+              "column": 24
+            }
+          },
+          "message": "jq: syntax error, unexpected end of the program",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Fix the jq program; it's checked without running it."
+        }
+      ]
+    }
+  ]
+}

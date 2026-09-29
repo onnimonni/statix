@@ -1,0 +1,8 @@
+---
+source: bin/tests/ruff.rs
+---
+{ system.build.testScript = ''
+  set -euxo pipefail
+  curl -sSf http://127.0.0.1:8000/
+''; }
+---

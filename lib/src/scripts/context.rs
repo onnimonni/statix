@@ -204,6 +204,10 @@ fn value_part(node: &SyntaxNode, value: &SyntaxNode) -> Option<bool> {
             SyntaxKind::NODE_WITH => ast::With::cast(parent.clone())
                 .and_then(|w| w.body())
                 .is_some_and(|b| b.syntax() == &cur),
+            // `testScript = { nodes, ... }: ''...''`
+            SyntaxKind::NODE_LAMBDA => ast::Lambda::cast(parent.clone())
+                .and_then(|l| l.body())
+                .is_some_and(|b| b.syntax() == &cur),
             SyntaxKind::NODE_APPLY => {
                 let apply = ast::Apply::cast(parent.clone());
                 let is_argument = apply
@@ -262,6 +266,10 @@ fn option_script(apv: &AttrpathValue) -> Option<(Lang, Kind)> {
 
     let n = path.len();
     let last = *path.last()?;
+    // NixOS tests: Python run by the test driver
+    if last == "testScript" {
+        return is_nixos_test(apv).then_some((Lang::Python, Kind::Script));
+    }
     let bash = Lang::Shell("bash");
     let systemd = n >= 4
         && SYSTEMD_SCRIPTS.contains(&last)
@@ -533,4 +541,121 @@ pub fn referenced_earlier(node: &SyntaxNode, reference: &Reference) -> bool {
             )
         })
         .any(|n| references(&n).iter().any(|r| r.path == reference.path))
+}
+
+/// Whether `testScript = ...` is a NixOS test's: `nodes` or `containers`
+/// next to it (not `system.build.testScript`, not a custom harness).
+fn is_nixos_test(apv: &AttrpathValue) -> bool {
+    let Some(set) = apv.syntax().parent() else {
+        return false;
+    };
+    set.children()
+        .filter_map(AttrpathValue::cast)
+        .any(|sibling| {
+            sibling
+                .attrpath()
+                .and_then(|p| p.attrs().next())
+                .and_then(|k| utils::attr_name(&k))
+                .is_some_and(|k| k == "nodes" || k == "containers")
+        })
+}
+
+/// NixOS test driver globals (`nixos/lib/test-driver`, `test_symbols`).
+const TEST_DRIVER_SYMBOLS: &[&str] = &[
+    "start_all",
+    "test_script",
+    "machines",
+    "machines_qemu",
+    "machines_nspawn",
+    "vlans",
+    "driver",
+    "log",
+    "os",
+    "create_machine",
+    "subtest",
+    "run_tests",
+    "join_all",
+    "retry",
+    "serial_stdout_off",
+    "serial_stdout_on",
+    "polling_condition",
+    "BaseMachine",
+    "QemuMachine",
+    "NspawnMachine",
+    "Machine",
+    "t",
+    "debug",
+    "dump_machine_ssh",
+];
+
+/// For a NixOS `testScript`: the names the test driver defines (its globals,
+/// one per machine, `machine` when there's one), and whether the machines
+/// are known (`nodes.<name>` written out in the file).
+#[must_use]
+pub fn nixos_test_symbols(s: &ast::Str) -> Option<(Vec<String>, bool)> {
+    let apv = s.syntax().ancestors().find_map(AttrpathValue::cast)?;
+    let key = apv.attrpath()?.attrs().last()?;
+    // `let testScript = ''...''; in { inherit testScript; nodes = ...; }`:
+    // a let binding that is Python is used as the test's script
+    let in_let = apv
+        .syntax()
+        .parent()
+        .is_some_and(|p| p.kind() == SyntaxKind::NODE_LET_IN);
+    if utils::attr_name(&key)? != "testScript" || !(is_nixos_test(&apv) || in_let) {
+        return None;
+    }
+    let root = s.syntax().ancestors().last()?;
+    let mut names: Vec<String> = TEST_DRIVER_SYMBOLS
+        .iter()
+        .map(|n| (*n).to_string())
+        .collect();
+    let mut machines: Vec<String> = Vec::new();
+    let mut known = true;
+    for b in root.descendants().filter_map(AttrpathValue::cast) {
+        let Some(path) = utils::enclosing_attrpath(b.syntax()) else {
+            continue;
+        };
+        let Some(i) = path.iter().position(|k| k == "nodes" || k == "containers") else {
+            continue;
+        };
+        match path.get(i + 1) {
+            // `nodes.server = ...`, `nodes = { server = ...; }`
+            Some(name) => {
+                let name = name.replace('-', "_");
+                if !machines.contains(&name) {
+                    machines.push(name);
+                }
+            }
+            // `nodes = lib.genAttrs ...`: not written out
+            None => match b.value() {
+                Some(Expr::AttrSet(set)) => {
+                    // `nodes = { inherit server; }`
+                    for name in set
+                        .syntax()
+                        .children()
+                        .filter_map(ast::Inherit::cast)
+                        .flat_map(|i| i.attrs())
+                        .filter_map(|a| utils::attr_name(&a))
+                    {
+                        machines.push(name.replace('-', "_"));
+                    }
+                }
+                _ => known = false,
+            },
+        }
+    }
+    known &= !machines.is_empty();
+    // `${helpers}` on its own line may define functions the script calls
+    let text = super::nixstr::Script::new(s).text;
+    if text
+        .lines()
+        .any(|l| l.trim_start().starts_with(super::nixstr::PLACEHOLDER))
+    {
+        known = false;
+    }
+    if machines.len() == 1 {
+        names.push("machine".into());
+    }
+    names.extend(machines);
+    Some((names, known))
 }

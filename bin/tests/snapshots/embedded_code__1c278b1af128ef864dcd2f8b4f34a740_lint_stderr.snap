@@ -1,0 +1,23 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  jq -n '$a + $b' --arg a 1 --argjson b 2
+  jq "$filter" x
+  jq '.a.${attr}' x
+''; }
+---
+[shellcheck] Warning: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:3:7 ]
+   │
+ 3 │   jq "$filter" x
+   │       ───┬───  
+   │          ╰───── SC2154: filter is referenced but not assigned.
+───╯
+[undeclared_command] Warning: Command in a shell script isn't declared or doesn't exist
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   jq -n '$a + $b' --arg a 1 --argjson b 2
+   │   ─┬  
+   │    ╰── jq isn't declared
+───╯

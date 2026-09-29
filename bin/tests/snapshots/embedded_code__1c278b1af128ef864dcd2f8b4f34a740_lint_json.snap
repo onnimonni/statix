@@ -1,0 +1,62 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  jq -n '$a + $b' --arg a 1 --argjson b 2
+  jq "$filter" x
+  jq '.a.${attr}' x
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 3,
+              "column": 7
+            },
+            "to": {
+              "line": 3,
+              "column": 14
+            }
+          },
+          "message": "SC2154: filter is referenced but not assigned.",
+          "suggestion": null,
+          "fixable": false,
+          "help": "The variable is never assigned in this script. If devenv/Nix provides it (env.*, $out, $DEVENV_ROOT), use \"${VAR:?}\" or add `# shellcheck disable=SC2154`; otherwise fix the name. See https://www.shellcheck.net/wiki/SC2154"
+        }
+      ]
+    },
+    {
+      "name": "undeclared_command",
+      "note": "Command in a shell script isn't declared or doesn't exist",
+      "code": 31,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 5
+            }
+          },
+          "message": "`jq` isn't declared",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Add the package providing `jq` to `packages`. If the environment provides it, add `# statix provided=jq` at the top of the script (or `provided = [ \"jq\" ]` in statix.toml); if it's optional, check for it with `command -v jq`."
+        }
+      ]
+    }
+  ]
+}

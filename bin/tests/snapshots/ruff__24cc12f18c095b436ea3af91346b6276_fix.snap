@@ -1,0 +1,12 @@
+---
+source: bin/tests/ruff.rs
+---
+{ nodes.web-server = { }; testScript = ''
+  import os
+  start_all()
+  web_server.wait_for_unit("nginx")
+  with subtest("x"):
+    machine.succeed("true")
+  undefined_helper()
+''; }
+---

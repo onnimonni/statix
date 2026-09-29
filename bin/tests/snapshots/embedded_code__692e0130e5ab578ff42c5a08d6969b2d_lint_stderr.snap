@@ -1,0 +1,21 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  n=$(awk -F: '{print $1' /etc/passwd)
+''; }
+---
+[shellcheck] Warning: ShellCheck found issues in an inline shell script
+   ╭─[ <temp_file_path>:2:3 ]
+   │
+ 2 │   n=$(awk -F: '{print $1' /etc/passwd)
+   │   ┬  
+   │   ╰── SC2034: n appears unused. Verify use (or export if used externally).
+───╯
+[embedded_code] Warning: Error in a jq, awk or python program inside a shell script
+   ╭─[ <temp_file_path>:2:24 ]
+   │
+ 2 │   n=$(awk -F: '{print $1' /etc/passwd)
+   │                        ┬  
+   │                        ╰── awk: unexpected newline or end of string
+───╯

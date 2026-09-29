@@ -140,8 +140,8 @@ about a second on a repository that size.
 
 ### Scripts in and next to Nix code
 
-Three lints check scripts with [ShellCheck](https://www.shellcheck.net)
-and [ruff](https://docs.astral.sh/ruff) (install them, or point
+Lints check scripts with [ShellCheck](https://www.shellcheck.net),
+[ruff](https://docs.astral.sh/ruff), jq and gawk (install them, or point
 `STATIX_SHELLCHECK` / `STATIX_RUFF` at them; without them the lints do
 nothing):
 
@@ -305,6 +305,19 @@ provided = ["docker"]                          # commands the host provides
 
 `STATIX_SYSTEMS=x86_64-linux,aarch64-darwin` overrides `systems`.
 
+### Programs inside shell scripts and NixOS tests
+
+`embedded_code` checks programs written inline in shell scripts: `jq`
+filters (compiled by jq without running them), `awk` programs (parsed by
+gawk) and `python -c` code (syntax errors and undefined names, with ruff).
+Programs with `${...}` or shell variables in them are skipped.
+
+NixOS test scripts (`testScript` next to `nodes`) are checked by `ruff`
+with the test driver's names defined: `start_all`, `subtest`, `machine`,
+one variable per node (`nodes.web-server` is `web_server`) and the rest.
+When the nodes aren't written out, or the script pulls in code with
+`${...}`, undefined names aren't reported.
+
 ### Structured files written as text
 
 `structured_text_file` reports JSON, YAML, TOML and INI files written as
@@ -405,6 +418,7 @@ script_file
 undeclared_command
 structured_text_file
 shell_idiom
+embedded_code
 ```
 
 All lints are enabled by default. Generate a minimal config

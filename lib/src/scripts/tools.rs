@@ -1,4 +1,4 @@
-//! Running shellcheck and ruff, normalized into [`Finding`]s.
+//! Running shellcheck, ruff, jq and gawk, normalized into [`Finding`]s.
 
 use super::{Finding, Level, fixes};
 use serde::Deserialize;
@@ -23,6 +23,114 @@ fn run(env: &str, program: &str, args: &[&OsStr], script: &str) -> Option<Vec<u8
         .ok()?;
     child.stdin.take()?.write_all(script.as_bytes()).ok()?;
     Some(child.wait_with_output().ok()?.stdout)
+}
+
+/// Run `program` (overridable with `env`) with `args` and no input:
+/// whether it succeeded, and its stderr.
+fn run_status(env: &str, program: &str, args: &[&OsStr]) -> Option<(bool, String)> {
+    let program = std::env::var_os(env).unwrap_or_else(|| program.into());
+    let output = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .ok()?;
+    Some((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+fn error(line: usize, column: usize, code: &str, message: String) -> Finding {
+    Finding {
+        line,
+        column,
+        end_line: line,
+        end_column: column,
+        level: Level::Error,
+        code: code.into(),
+        message,
+        url: None,
+        fix: None,
+    }
+}
+
+/// Compile errors of jq program `program`, without running it. `vars` are
+/// the `$names` its command line defines (`--arg name value`).
+pub fn jq(program: &str, vars: &[String]) -> Option<Vec<Finding>> {
+    let wrapped = format!("if false then ({program}\n) else empty end");
+    let mut args: Vec<&OsStr> = vec![OsStr::new("-n")];
+    for v in vars {
+        args.extend([OsStr::new("--argjson"), OsStr::new(v), OsStr::new("null")]);
+    }
+    args.push(OsStr::new(&wrapped));
+    let (ok, stderr) = run_status("STATIX_JQ", "jq", &args)?;
+    if ok {
+        return Some(Vec::new());
+    }
+    // `jq: error: syntax error, unexpected ... at <top-level>, line 2:`
+    let findings: Vec<Finding> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("jq: error: "))
+        .map(|m| {
+            let (message, line) = match m.rsplit_once(" at <top-level>, line ") {
+                // `line 2:` (jq 1.7), `line 2, column 1:` (jq 1.8)
+                Some((msg, rest)) => (
+                    msg.to_string(),
+                    rest.split([',', ':'])
+                        .next()
+                        .and_then(|n| n.trim().parse().ok())
+                        .unwrap_or(1),
+                ),
+                None => (m.to_string(), 1),
+            };
+            let message = message.replace(" (Unix shell quoting issues?)", "");
+            // the wrapper's `)` after the program: it ended too early
+            let lines = program.lines().count().max(1);
+            if line > lines {
+                let message = message.replace("unexpected ')'", "unexpected end of the program");
+                return error(lines, 1, "jq", message);
+            }
+            error(line, 1, "jq", message)
+        })
+        .collect();
+    // not a compile error (jq missing features, crashes): nothing to say
+    Some(findings)
+}
+
+/// Syntax errors of awk program `program`, parsed by gawk without running.
+pub fn awk(program: &str) -> Option<Vec<Finding>> {
+    let args = [
+        OsStr::new("-o/dev/null"),
+        OsStr::new("--"),
+        OsStr::new(program),
+    ];
+    let (ok, stderr) = run_status("STATIX_AWK", "gawk", &args)?;
+    if ok {
+        return Some(Vec::new());
+    }
+    // gawk: cmd. line:2: function f(a { return a }
+    // gawk: cmd. line:2:              ^ syntax error
+    let mut out = Vec::new();
+    for l in stderr.lines() {
+        let Some(rest) = l.strip_prefix("gawk: cmd. line:") else {
+            continue;
+        };
+        let Some((line, text)) = rest.split_once(": ") else {
+            continue;
+        };
+        let Some(caret) = text.find('^') else {
+            continue;
+        };
+        if !text[..caret].trim().is_empty() {
+            continue;
+        }
+        let line = line.parse().unwrap_or(1);
+        let message = text[caret + 1..].trim().to_string();
+        out.push(error(line, caret + 1, "awk", message));
+    }
+    Some(out)
 }
 
 #[derive(Deserialize)]
@@ -224,8 +332,10 @@ pub fn versions() -> String {
         )
     };
     format!(
-        "{} {}",
+        "{} {} {} {}",
         version("STATIX_SHELLCHECK", "shellcheck"),
-        version("STATIX_RUFF", "ruff")
+        version("STATIX_RUFF", "ruff"),
+        version("STATIX_JQ", "jq"),
+        version("STATIX_AWK", "gawk")
     )
 }

@@ -5,6 +5,8 @@
   gitMinimal,
   shellcheck,
   ruff,
+  jq,
+  gawk,
 }:
 rustPlatform.buildRustPackage {
   pname = "statix";
@@ -32,6 +34,8 @@ rustPlatform.buildRustPackage {
     gitMinimal
     shellcheck
     ruff
+    jq
+    gawk
   ];
 
   checkPhase = ''

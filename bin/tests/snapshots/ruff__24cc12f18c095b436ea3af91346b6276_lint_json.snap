@@ -1,0 +1,73 @@
+---
+source: bin/tests/ruff.rs
+---
+{ nodes.web-server = { }; testScript = ''
+  import os
+  start_all()
+  web_server.wait_for_unit("nginx")
+  with subtest("x"):
+    machine.succeed("true")
+  undefined_helper()
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "ruff",
+      "note": "ruff found issues in an inline Python script",
+      "code": 29,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 12
+            }
+          },
+          "message": "I001: Import block is un-sorted or un-formatted",
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://docs.astral.sh/ruff/rules/unsorted-imports"
+        },
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 10
+            },
+            "to": {
+              "line": 2,
+              "column": 12
+            }
+          },
+          "message": "F401: `os` imported but unused",
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://docs.astral.sh/ruff/rules/unused-import"
+        },
+        {
+          "at": {
+            "from": {
+              "line": 7,
+              "column": 3
+            },
+            "to": {
+              "line": 7,
+              "column": 19
+            }
+          },
+          "message": "F821: Undefined name `undefined_helper`",
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://docs.astral.sh/ruff/rules/undefined-name"
+        }
+      ]
+    }
+  ]
+}

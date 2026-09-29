@@ -5,6 +5,7 @@ pub mod commands;
 pub mod context;
 pub mod declared;
 pub mod directives;
+pub mod embedded;
 pub mod fixes;
 pub mod idioms;
 pub mod nixstr;
@@ -302,7 +303,12 @@ pub fn check(
     Some(
         findings
             .iter()
-            .filter(|f| !is_noise(f, lang, kind, has_interp(f.line)))
+            // for Python also the line before: a multi-line interpolation
+            .filter(|f| {
+                let near = has_interp(f.line)
+                    || lang == Lang::Python && f.line > 1 && has_interp(f.line - 1);
+                !is_noise(f, lang, kind, near)
+            })
             .cloned()
             .collect(),
     )
@@ -418,8 +424,14 @@ fn is_noise(f: &Finding, lang: Lang, kind: Kind, line_has_interp: bool) -> bool 
                     Kind::Fragment => code < 2000 || fixes::HOOK_NOISE.contains(&code),
                 }
         }
-        // `${...}` used as Python code shows up as an undefined name
-        Lang::Python => f.message.contains(PLACEHOLDER),
+        // `${...}` used as Python code shows up as an undefined name; code
+        // interpolated into a line (`${optionalString x "'a': 1,"}`) breaks
+        // the syntax around it or is a lone expression
+        Lang::Python => {
+            f.message.contains(PLACEHOLDER)
+                || line_has_interp
+                    && matches!(f.code.as_str(), "invalid-syntax" | "syntax-error" | "B018")
+        }
     }
 }
 
@@ -568,7 +580,38 @@ pub fn check_string(s: &ast::Str, python: bool) -> Option<Checked> {
     if python != (lang == Lang::Python) {
         return None;
     }
+    // Python pieces (`${helper}` in a test script) aren't code on their own
+    if lang == Lang::Python && kind == Kind::Fragment {
+        return None;
+    }
     let filename = current_dir().map(|d| d.join("inline.py"));
+    // NixOS tests: the driver's globals, defined on a first line for ruff
+    if let Some((names, known)) = context::nixos_test_symbols(s) {
+        let prelude = format!("{} = None  # statix: test driver\n", names.join(" = "));
+        let text = format!("{prelude}{}", script.text);
+        let findings = check(lang, kind, &text, filename.as_deref(), &|l| {
+            l > 1 && script.line_has_interp(l - 1)
+        })?
+        .into_iter()
+        .filter(|f| f.line > 1)
+        // `import os` redefining the prelude's `os`
+        .filter(|f| !(f.code == "F811" && f.message.contains("from line 1")))
+        // machines not written out: any name may be one
+        .filter(|f| f.code != "F821" || known && !f.message.contains("`vlan"))
+        .map(|f| Finding {
+            line: f.line - 1,
+            end_line: f.end_line.saturating_sub(1).max(1),
+            fix: None,
+            ..f
+        })
+        .collect();
+        return Some(Checked {
+            script,
+            findings,
+            fixed: None,
+            fixed_findings: Vec::new(),
+        });
+    }
     let findings = check(lang, kind, &script.text, filename.as_deref(), &|l| {
         script.line_has_interp(l)
     })?;

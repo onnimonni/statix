@@ -28,5 +28,6 @@ lints! {
     script_file,
     undeclared_command,
     structured_text_file,
-    shell_idiom
+    shell_idiom,
+    embedded_code
 }

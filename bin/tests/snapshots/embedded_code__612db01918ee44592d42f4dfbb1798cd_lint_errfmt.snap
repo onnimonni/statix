@@ -1,0 +1,9 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  jq '.items[] | .name,' data.json
+''; }
+---
+<temp_file_path>>2:3:W:31:[undeclared_command] `jq` isn't declared
+<temp_file_path>>2:7:W:34:[embedded_code] jq: syntax error, unexpected end of the program

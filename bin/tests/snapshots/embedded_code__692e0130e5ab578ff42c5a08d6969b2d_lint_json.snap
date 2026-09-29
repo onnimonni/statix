@@ -1,0 +1,60 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  n=$(awk -F: '{print $1' /etc/passwd)
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "shellcheck",
+      "note": "ShellCheck found issues in an inline shell script",
+      "code": 28,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 3
+            },
+            "to": {
+              "line": 2,
+              "column": 4
+            }
+          },
+          "message": "SC2034: n appears unused. Verify use (or export if used externally).",
+          "suggestion": null,
+          "fixable": false,
+          "help": "The variable is never used in this script. Remove it, or export it if another process reads it. See https://www.shellcheck.net/wiki/SC2034"
+        }
+      ]
+    },
+    {
+      "name": "embedded_code",
+      "note": "Error in a jq, awk or python program inside a shell script",
+      "code": 34,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 2,
+              "column": 24
+            },
+            "to": {
+              "line": 2,
+              "column": 25
+            }
+          },
+          "message": "awk: unexpected newline or end of string",
+          "suggestion": null,
+          "fixable": false,
+          "help": "Fix the awk program; it's checked without running it."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+---
+source: bin/tests/embedded_code.rs
+---
+{ scripts.x.exec = ''
+  jq '.items[] | .name,' data.json
+''; }
+---

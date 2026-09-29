@@ -47,7 +47,7 @@ fn write_stderr<T: Write>(
     vfs: &ReadOnlyVfs,
 ) -> io::Result<()> {
     let file_id = lint_result.file_id;
-    let src = str::from_utf8(vfs.get(file_id)).unwrap();
+    let src = str::from_utf8(vfs.get(file_id)).expect("files are read as UTF-8 strings");
     let path = vfs.file_path(file_id);
     let range = |at: TextRange| at.start().into()..at.end().into();
     let src_id = path.to_str().unwrap_or("<unknown>");
@@ -95,7 +95,7 @@ fn write_errfmt<T: Write>(
     vfs: &ReadOnlyVfs,
 ) -> io::Result<()> {
     let file_id = lint_result.file_id;
-    let src = str::from_utf8(vfs.get(file_id)).unwrap();
+    let src = str::from_utf8(vfs.get(file_id)).expect("files are read as UTF-8 strings");
     let path = vfs.file_path(file_id);
     for report in &lint_result.reports {
         for diagnostic in &report.diagnostics {
@@ -129,7 +129,7 @@ fn write_agent<T: Write>(
     vfs: &ReadOnlyVfs,
 ) -> io::Result<()> {
     let file_id = lint_result.file_id;
-    let src = str::from_utf8(vfs.get(file_id)).unwrap();
+    let src = str::from_utf8(vfs.get(file_id)).expect("files are read as UTF-8 strings");
     let path = vfs.file_path(file_id).to_str().unwrap_or("<unknown>");
     let lines: Vec<&str> = src.lines().collect();
 
@@ -375,7 +375,7 @@ mod json {
         writeln!(
             writer,
             "{}",
-            serde_json::to_string_pretty(&Out { path, report }).unwrap()
+            serde_json::to_string_pretty(&Out { path, report }).expect("reports serialize to JSON")
         )?;
         Ok(())
     }

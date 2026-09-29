@@ -53,18 +53,24 @@ impl ReadOnlyVfs {
     }
     #[must_use]
     pub fn file_path(&self, file_id: FileId) -> &Path {
-        self.interner.lookup(file_id).unwrap()
+        self.interner
+            .lookup(file_id)
+            .expect("file ids come from this vfs")
     }
     #[must_use]
     pub fn get(&self, file_id: FileId) -> &Vec<u8> {
-        self.data.get(&file_id).unwrap()
+        self.data
+            .get(&file_id)
+            .expect("file ids come from this vfs")
     }
     #[must_use]
     pub fn get_str(&self, file_id: FileId) -> &str {
-        std::str::from_utf8(self.get(file_id)).unwrap()
+        std::str::from_utf8(self.get(file_id)).expect("files are read as UTF-8 strings")
     }
     pub fn get_mut(&mut self, file_id: FileId) -> &mut Vec<u8> {
-        self.data.get_mut(&file_id).unwrap()
+        self.data
+            .get_mut(&file_id)
+            .expect("file ids come from this vfs")
     }
     pub fn set_file_contents<P: AsRef<Path>>(&mut self, path: P, contents: &[u8]) {
         let file_id = self.alloc_file_id(path);

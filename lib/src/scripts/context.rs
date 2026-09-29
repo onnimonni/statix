@@ -56,6 +56,16 @@ const SYSTEMD_SCRIPTS: &[&str] = &[
 const SCRIPT_EXTENSIONS: &[&str] = &["sh", "bash", "py"];
 
 /// Last name of `f` / `pkgs.writers.writeBash`.
+/// The function a (curried) application calls: `f` of `f a b`.
+#[must_use]
+pub fn applied_name(a: &ast::Apply) -> Option<String> {
+    let mut f = a.lambda()?;
+    while let Expr::Apply(inner) = f {
+        f = inner.lambda()?;
+    }
+    fn_name(&f)
+}
+
 pub fn fn_name(e: &Expr) -> Option<String> {
     match e {
         Expr::Ident(i) => Some(i.syntax().text().to_string()),
@@ -421,33 +431,30 @@ fn kind_of(path: &Path) -> Kind {
 
 /// `./script.sh`: a script file if it has a script extension or shebang, or
 /// is used as a script (`exec = ./x;`, `builtins.readFile ./x`).
+/// The language a file is used as: `readFile ./x` or the path itself as the
+/// value of a script option.
+fn used_lang(node: &SyntaxNode, path: &Path) -> Option<Lang> {
+    let parent = node.parent()?;
+    let read_file = ast::Apply::cast(parent)
+        .filter(|a| a.lambda().and_then(|f| fn_name(&f)).as_deref() == Some("readFile"));
+    let used = read_file.map_or_else(|| node.clone(), |a| a.syntax().clone());
+    let text = std::fs::read_to_string(path).ok()?;
+    usage_context(&used, &text).map(|(lang, _)| lang)
+}
+
 fn path_reference(node: &SyntaxNode) -> Option<Reference> {
     let written = node.text().to_string();
-    if written.contains("${") {
+    // an interpolated path (dollar, brace): not a file we can read
+    if written.contains("$\x7b") {
         return None;
     }
     let path = resolve(&written)?;
-    let lang = file_lang(&path).or_else(|| {
-        // `readFile ./x` or the path itself as the value
-        let parent = node.parent()?;
-        let used = match ast::Apply::cast(parent) {
-            Some(apply) if fn_name(&apply.lambda()?)? == "readFile" => apply.syntax().clone(),
-            _ => node.clone(),
-        };
-        let text = std::fs::read_to_string(&path).ok()?;
-        usage_context(&used, &text).map(|(lang, _)| lang)
-    })?;
+    let lang = file_lang(&path).or_else(|| used_lang(node, &path))?;
     let setup_hook = node
         .ancestors()
         .filter_map(ast::Apply::cast)
         .take(3)
-        .any(|a| {
-            let mut f = a.lambda();
-            while let Some(Expr::Apply(inner)) = f {
-                f = inner.lambda();
-            }
-            f.and_then(|f| fn_name(&f)).as_deref() == Some("makeSetupHook")
-        });
+        .any(|a| applied_name(&a).as_deref() == Some("makeSetupHook"));
     Some(Reference {
         at: node.text_range(),
         written,

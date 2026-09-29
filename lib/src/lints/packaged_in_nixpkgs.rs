@@ -1,6 +1,6 @@
 use crate::{
     Metadata, Report, Rule, Severity,
-    github::{self, Packaged},
+    github::{self, Packaged, Source},
     scripts,
 };
 
@@ -79,8 +79,128 @@ fn disabled(node: &rnix::SyntaxNode) -> bool {
         })
 }
 
+/// What nixpkgs has for a source: the same package, or only others from
+/// the repository.
+enum Match<'a> {
+    Same(&'a Packaged),
+    Others(Vec<&'a str>),
+}
+
+/// The nixpkgs package `source` builds, if any: named alike (`pname` like
+/// the attribute or nixpkgs' `pname`), the newest of those; unnamed, the
+/// repository's one package.
+fn find_match<'a>(source: &Source, candidates: &[&'a Packaged]) -> Option<Match<'a>> {
+    let mut attrs: Vec<&str> = candidates.iter().map(|p| p.attr.as_str()).collect();
+    attrs.sort_unstable();
+    attrs.dedup();
+    // Python packages are in `python3Packages`; applications may be too
+    let builder = source.builder.as_deref().unwrap_or("");
+    let python_only = builder.contains("PythonPackage");
+    let python_app = builder.contains("PythonApplication");
+    let fits = |p: &Packaged| match p.attr.rsplit_once('.').map_or("", |(s, _)| s) {
+        "python3Packages" => python_only || python_app,
+        "" => !python_only,
+        _ => false,
+    };
+    let named: Vec<&Packaged> = candidates
+        .iter()
+        .copied()
+        .filter(|p| {
+            let name = p.attr.rsplit_once('.').map_or(p.attr.as_str(), |(_, n)| n);
+            source.pname.as_deref().is_some_and(|ours| {
+                same_name(ours, name) || p.pname.as_deref().is_some_and(|t| same_name(ours, t))
+            }) && fits(p)
+        })
+        .collect();
+    let same = if named.is_empty() {
+        // a bare source, a builder without `pname`: not a package set's
+        if source.pname.is_none() && attrs.len() == 1 && fits(candidates[0]) {
+            vec![candidates[0]]
+        } else {
+            Vec::new()
+        }
+    } else {
+        named
+    };
+    // the newest of them (`abseil-cpp_202505`, `abseil-cpp_202601`)
+    let best = same.into_iter().max_by(|a, b| {
+        github::compare_versions(
+            a.version.as_deref().unwrap_or(""),
+            b.version.as_deref().unwrap_or(""),
+        )
+    });
+    match best {
+        Some(p) => Some(Match::Same(p)),
+        None if attrs.is_empty() || !source.built => None,
+        None => Some(Match::Others(attrs)),
+    }
+}
+
+/// Severity, message and help for `source` against nixpkgs' `best`, or
+/// `None` when nixpkgs' version is older.
+fn verdict(source: &Source, best: &Packaged) -> Option<(Severity, String, String)> {
+    let attr = &best.attr;
+    let theirs = best.version.as_deref();
+    let shown = theirs.map_or_else(String::new, |v| format!(" {v}"));
+    let repo = &source.repo;
+    // nixpkgs has an older version: nothing to suggest
+    if let (Some(ours), Some(nix)) = (source.version.as_deref(), theirs)
+        && !source.pinned
+        && github::compare_versions(nix, ours) == Ordering::Less
+    {
+        return None;
+    }
+    let hint = |message: String, help: String| Some((Severity::Hint, message, help));
+    if !source.built {
+        let version = theirs.map_or_else(String::new, |v| format!(" ({v})"));
+        return hint(
+            format!("`{repo}` is the source of `pkgs.{attr}`{shown}"),
+            format!(
+                "If nixpkgs' version{version} does, `pkgs.{attr}.src` is this source, already fetched and in the binary cache."
+            ),
+        );
+    }
+    if source.pinned {
+        return hint(
+            format!("`{repo}` is in nixpkgs as `pkgs.{attr}`{shown}"),
+            format!(
+                "This builds a commit; if nixpkgs' version does, use `pkgs.{attr}`, or `pkgs.{attr}.overrideAttrs (old: {{ src = ...; }})` to build this revision with nixpkgs' build."
+            ),
+        );
+    }
+    // broken, unfree or for one OS only in nixpkgs: it may not do
+    if !best.flags.is_empty() {
+        let why = best.flags.join(", ");
+        return hint(
+            format!("`{repo}` is in nixpkgs as `pkgs.{attr}`{shown} ({why} there)"),
+            format!(
+                "nixpkgs' package is {why}; if it works for you, use `pkgs.{attr}` or `pkgs.{attr}.overrideAttrs`. Silence this with `# statix disable=packaged_in_nixpkgs` on the line before."
+            ),
+        );
+    }
+    let (Some(ours), Some(nix)) = (source.version.as_deref(), theirs) else {
+        return hint(
+            format!("`{repo}` is in nixpkgs as `pkgs.{attr}`{shown}"),
+            format!(
+                "If nixpkgs' version does, use `pkgs.{attr}`; `pkgs.{attr}.overrideAttrs` changes it while keeping nixpkgs' build."
+            ),
+        );
+    };
+    let newer = if github::compare_versions(nix, ours) == Ordering::Equal {
+        "the same version"
+    } else {
+        "newer"
+    };
+    Some((
+        Severity::Warn,
+        format!("`{repo}` is in nixpkgs as `pkgs.{attr}` ({nix}, {newer})"),
+        format!(
+            "Use `pkgs.{attr}` instead of building it; to change it, `pkgs.{attr}.overrideAttrs` keeps nixpkgs' build. Versions are from the nixpkgs statix was built with: check yours with `nix eval nixpkgs#{attr}.version`. If you build it on purpose, add `# statix disable=packaged_in_nixpkgs` on the line before."
+        ),
+    ))
+}
+
 impl Rule for PackagedInNixpkgs {
-    #[allow(clippy::too_many_lines)]
     fn validate(&self, node: &SyntaxElement) -> Option<Report> {
         let NodeOrToken::Node(node) = node else {
             return None;
@@ -91,148 +211,27 @@ impl Rule for PackagedInNixpkgs {
             return None;
         }
         let candidates: Vec<&Packaged> = github::packaged().get(&source.repo)?.iter().collect();
-        let mut attrs: Vec<&str> = candidates.iter().map(|p| p.attr.as_str()).collect();
-        attrs.sort_unstable();
-        attrs.dedup();
-        // Python packages are in `python3Packages`; applications may be too
-        let builder = source.builder.as_deref().unwrap_or("");
-        let python_only = builder.contains("PythonPackage");
-        let python_app = builder.contains("PythonApplication");
-        let fits = |p: &Packaged| {
-            let set = p.attr.rsplit_once('.').map_or("", |(s, _)| s);
-            match set {
-                "python3Packages" => python_only || python_app,
-                "" => !python_only,
-                _ => false,
-            }
-        };
-        // the same package: `pname` like the attribute or its `pname`
-        let named: Vec<&Packaged> = candidates
-            .iter()
-            .copied()
-            .filter(|p| {
-                let name = p.attr.rsplit_once('.').map_or(p.attr.as_str(), |(_, n)| n);
-                source.pname.as_deref().is_some_and(|ours| {
-                    same_name(ours, name) || p.pname.as_deref().is_some_and(|t| same_name(ours, t))
-                }) && fits(p)
-            })
-            .collect();
-        // unnamed (a bare source, a builder without `pname`): the one package
-        // of the repository, not one of a package set
-        let unnamed = || {
-            (source.pname.is_none() && attrs.len() == 1 && fits(candidates[0]))
-                .then(|| vec![candidates[0]])
-        };
-        let same = if named.is_empty() {
-            unnamed().unwrap_or_default()
-        } else {
-            named
-        };
-        // the newest of them (`abseil-cpp_202505`, `abseil-cpp_202601`)
-        let Some(best) = same.into_iter().max_by(|a, b| {
-            github::compare_versions(
-                a.version.as_deref().unwrap_or(""),
-                b.version.as_deref().unwrap_or(""),
-            )
-        }) else {
+        let (severity, message, help) = match find_match(&source, &candidates)? {
+            Match::Same(best) => verdict(&source, best)?,
             // a monorepo, or a component of it: say what's there
-            if attrs.is_empty() || !source.built {
-                return None;
-            }
-            let list = attrs
-                .iter()
-                .take(5)
-                .map(|a| format!("`pkgs.{a}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Some(
-                self.report().severity(Severity::Hint).diagnostic_with_help(
-                    node.text_range(),
+            Match::Others(attrs) => {
+                let list = attrs
+                    .iter()
+                    .take(5)
+                    .map(|a| format!("`pkgs.{a}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                    Severity::Hint,
                     format!("nixpkgs builds packages from `{}`: {list}", source.repo),
                     "If one of them is what this builds, use it instead of building it here; `overrideAttrs` changes it while keeping nixpkgs' build.".to_string(),
-                ),
-            );
+                )
+            }
         };
-        let attr = &best.attr;
-        let theirs = best.version.as_deref();
-        let at = node.text_range();
-        let shown = |v: Option<&str>| v.map_or_else(String::new, |v| format!(" {v}"));
-        let hint = |message: String, help: String| {
-            Some(
-                self.report()
-                    .severity(Severity::Hint)
-                    .diagnostic_with_help(at, message, help),
-            )
-        };
-        // nixpkgs has an older version: nothing to suggest
-        if let (Some(ours), Some(nix)) = (source.version.as_deref(), theirs)
-            && !source.pinned
-            && github::compare_versions(nix, ours) == Ordering::Less
-        {
-            return None;
-        }
-        if !source.built {
-            let version = theirs.map_or_else(String::new, |v| format!(" ({v})"));
-            return hint(
-                format!(
-                    "`{}` is the source of `pkgs.{attr}`{}",
-                    source.repo,
-                    shown(theirs)
-                ),
-                format!(
-                    "If nixpkgs' version{version} does, `pkgs.{attr}.src` is this source, already fetched and in the binary cache."
-                ),
-            );
-        }
-        if source.pinned {
-            return hint(
-                format!(
-                    "`{}` is in nixpkgs as `pkgs.{attr}`{}",
-                    source.repo,
-                    shown(theirs)
-                ),
-                format!(
-                    "This builds a commit; if nixpkgs' version does, use `pkgs.{attr}`, or `pkgs.{attr}.overrideAttrs (old: {{ src = ...; }})` to build this revision with nixpkgs' build."
-                ),
-            );
-        }
-        // broken, unfree or for one OS only in nixpkgs: it may not do
-        if !best.flags.is_empty() {
-            let why = best.flags.join(", ");
-            return hint(
-                format!(
-                    "`{}` is in nixpkgs as `pkgs.{attr}`{} ({why} there)",
-                    source.repo,
-                    shown(theirs)
-                ),
-                format!(
-                    "nixpkgs' package is {why}; if it works for you, use `pkgs.{attr}` or `pkgs.{attr}.overrideAttrs`. Silence this with `# statix disable=packaged_in_nixpkgs` on the line before."
-                ),
-            );
-        }
-        let (Some(ours), Some(nix)) = (source.version.as_deref(), theirs) else {
-            return hint(
-                format!(
-                    "`{}` is in nixpkgs as `pkgs.{attr}`{}",
-                    source.repo,
-                    shown(theirs)
-                ),
-                format!(
-                    "If nixpkgs' version does, use `pkgs.{attr}`; `pkgs.{attr}.overrideAttrs` changes it while keeping nixpkgs' build."
-                ),
-            );
-        };
-        let newer = if github::compare_versions(nix, ours) == Ordering::Equal {
-            "the same version"
-        } else {
-            "newer"
-        };
-        Some(self.report().severity(Severity::Warn).diagnostic_with_help(
-            at,
-            format!("`{}` is in nixpkgs as `pkgs.{attr}` ({nix}, {newer})", source.repo),
-            format!(
-                "Use `pkgs.{attr}` instead of building it; to change it, `pkgs.{attr}.overrideAttrs` keeps nixpkgs' build. Versions are from the nixpkgs statix was built with: check yours with `nix eval nixpkgs#{attr}.version`. If you build it on purpose, add `# statix disable=packaged_in_nixpkgs` on the line before."
-            ),
+        Some(self.report().severity(severity).diagnostic_with_help(
+            node.text_range(),
+            message,
+            help,
         ))
     }
 }

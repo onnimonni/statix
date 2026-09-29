@@ -209,7 +209,10 @@ pub mod main {
 
     pub fn single(single_config: &SingleConfig) -> Result<(), StatixErr> {
         let vfs = single_config.vfs()?;
-        let entry = vfs.iter().next().unwrap();
+        let entry = vfs
+            .iter()
+            .next()
+            .expect("the single-fix vfs has exactly one file");
         let path = entry.file_path.display().to_string();
         let original_src = entry.contents;
 

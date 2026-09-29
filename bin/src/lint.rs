@@ -156,7 +156,9 @@ pub mod main {
             .filter(|(_, r, _)| !r.reports.is_empty())
             .collect();
         for (_, r, _) in &reported {
-            stdout.write(r, &vfs, check_config.format).unwrap();
+            stdout
+                .write(r, &vfs, check_config.format)
+                .expect("writing the report to stdout");
         }
         // hints (suggestions) are shown but don't fail the check
         let failed = reported.iter().any(|(_, r, _)| r.reports.iter().any(fails));

@@ -47,7 +47,11 @@ fn find(offset: TextSize, src: &str) -> Result<Report, SingleFixErr> {
             WalkEvent::Leave(_) => None,
         })
         .flatten()
-        .find(|report| report.total_diagnostic_range().unwrap().contains(offset))
+        .find(|report| {
+            report
+                .total_diagnostic_range()
+                .is_some_and(|r| r.contains(offset))
+        })
         .ok_or(SingleFixErr::NoOp)
 }
 

@@ -116,27 +116,31 @@ fn context(s: &ast::Str, kind: Kind, shell: &str) -> idioms::Context {
     }
 }
 
-/// The `${...}` interpolations in Nix source `text`, in order.
+/// Opening and closing brace (as bytes: brace literals confuse tools that
+/// count braces).
+const OPEN: u8 = 0x7b;
+const CLOSE: u8 = 0x7d;
+
+/// The interpolations (dollar, brace ... brace) in Nix source `text`, in
+/// order.
 fn interpolations(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes = text.as_bytes();
     let mut i = 0;
     while i + 1 < bytes.len() {
-        // `''${` is an escaped, literal `${`
+        // two single quotes before the dollar escape it: literal text
         let escaped = i >= 2 && &bytes[i - 2..i] == b"''";
-        if bytes[i] == b'$' && bytes[i + 1] == b'{' && !escaped {
+        if bytes[i] == b'$' && bytes[i + 1] == OPEN && !escaped {
             let mut depth = 0;
             let mut j = i + 1;
             while j < bytes.len() {
-                match bytes[j] {
-                    b'{' => depth += 1,
-                    b'}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
+                if bytes[j] == OPEN {
+                    depth += 1;
+                } else if bytes[j] == CLOSE {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
                     }
-                    _ => {}
                 }
                 j += 1;
             }

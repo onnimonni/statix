@@ -146,7 +146,8 @@ impl Report {
     /// Unsafe but handy replacement for above
     #[must_use]
     pub fn range(&self) -> TextRange {
-        self.total_suggestion_range().unwrap()
+        self.total_suggestion_range()
+            .expect("range() is only called on reports with suggestions")
     }
     /// Apply all diagnostics. Assumption: diagnostics do not overlap
     pub fn apply(&self, src: &mut String) {
@@ -174,8 +175,7 @@ impl Report {
         message
             .as_mut_str()
             .get_mut(0..1)
-            .unwrap()
-            .make_ascii_uppercase();
+            .map(str::make_ascii_uppercase);
         Self::new("syntax_error", "Syntax error", 0)
             .diagnostic(*at, message)
             .severity(Severity::Error)
@@ -357,8 +357,6 @@ pub trait Metadata {
 /// The `lint` macro scans nearby doc comments for
 /// explanations and derives this trait.
 ///
-/// FIXME: the lint macro does way too much, maybe
-/// split it into smaller macros.
 pub trait Explain {
     fn explanation(&self) -> &'static str {
         "no explanation found"

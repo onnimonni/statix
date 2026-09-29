@@ -108,13 +108,13 @@ impl Rule for RepeatedKeys {
 
         let mut iter = occurrences.into_iter();
 
-        let (first_annotation, first_subkey) = iter.next().unwrap();
+        let (first_annotation, first_subkey) = iter.next().expect("at least 3 occurrences");
         let first_message = format!("The key `{first_component_ident}` is first assigned here ...");
 
-        let (second_annotation, second_subkey) = iter.next().unwrap();
+        let (second_annotation, second_subkey) = iter.next().expect("at least 3 occurrences");
         let second_message = "... repeated here ...";
 
-        let (third_annotation, third_subkey) = iter.next().unwrap();
+        let (third_annotation, third_subkey) = iter.next().expect("at least 3 occurrences");
         let third_message = {
             let remaining_occurrences = iter.count();
             let mut message = match remaining_occurrences {
@@ -126,7 +126,7 @@ impl Rule for RepeatedKeys {
                 message,
                 " Try `{first_component_ident} = {{ {first_subkey}=...; {second_subkey}=...; {third_subkey}=...; }}` instead."
             )
-            .unwrap();
+            .expect("writing to a String");
             message
         };
 

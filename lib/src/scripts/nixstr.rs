@@ -82,10 +82,12 @@ impl Script {
         let mut raw: Vec<(Vec<Item>, usize)> = vec![(Vec::new(), end)];
         for item in items {
             if let Item::Char { c: '\n', src, .. } = item {
-                raw.last_mut().unwrap().1 = src.start;
+                if let Some(line) = raw.last_mut() {
+                    line.1 = src.start;
+                }
                 raw.push((Vec::new(), end));
-            } else {
-                raw.last_mut().unwrap().0.push(item);
+            } else if let Some(line) = raw.last_mut() {
+                line.0.push(item);
             }
         }
 

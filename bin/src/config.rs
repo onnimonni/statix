@@ -92,8 +92,7 @@ impl Check {
             let src = io::stdin()
                 .lock()
                 .lines()
-                .map(|l| l.unwrap())
-                .collect::<Vec<String>>()
+                .collect::<Result<Vec<String>, _>>()?
                 .join("\n");
             Ok(ReadOnlyVfs::singleton("<stdin>", src.as_bytes()))
         } else {
@@ -169,8 +168,7 @@ impl Fix {
             let src = io::stdin()
                 .lock()
                 .lines()
-                .map(|l| l.unwrap())
-                .collect::<Vec<String>>()
+                .collect::<Result<Vec<String>, _>>()?
                 .join("\n");
             Ok(ReadOnlyVfs::singleton("<stdin>", src.as_bytes()))
         } else {
@@ -228,13 +226,16 @@ impl Single {
             let src = io::stdin()
                 .lock()
                 .lines()
-                .map(|l| l.unwrap())
-                .collect::<Vec<String>>()
+                .collect::<Result<Vec<String>, _>>()?
                 .join("\n");
             Ok(ReadOnlyVfs::singleton("<stdin>", src.as_bytes()))
         } else {
-            let src = std::fs::read_to_string(self.target.as_ref().unwrap())
-                .map_err(ConfigErr::InvalidPath)?;
+            let src = std::fs::read_to_string(
+                self.target
+                    .as_ref()
+                    .expect("clap requires a target unless --stdin is given"),
+            )
+            .map_err(ConfigErr::InvalidPath)?;
             Ok(ReadOnlyVfs::singleton("<stdin>", src.as_bytes()))
         }
     }
@@ -355,7 +356,7 @@ impl ConfFile {
                 ..Self::default()
             }
         };
-        toml::ser::to_string_pretty(&ideal_config).unwrap()
+        toml::ser::to_string_pretty(&ideal_config).expect("the config serializes to TOML")
     }
     #[must_use]
     pub fn lints(&self) -> LintMap {

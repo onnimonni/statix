@@ -36,7 +36,7 @@ fn reorder(mut reports: Vec<Report>) -> Vec<Report> {
     reports.sort_by(|a, b| {
         let a_range = a.range();
         let b_range = b.range();
-        a_range.end().partial_cmp(&b_range.end()).unwrap()
+        a_range.end().cmp(&b_range.end())
     });
 
     reports

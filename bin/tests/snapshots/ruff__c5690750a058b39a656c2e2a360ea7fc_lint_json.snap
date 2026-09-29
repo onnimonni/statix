@@ -1,0 +1,38 @@
+---
+source: bin/tests/ruff.rs
+---
+{ nodes."2nd-host" = {}; nodes."web.example" = {}; testScript = ''
+  _nd_host.succeed("true")
+  web_example.succeed("true")
+  machine.succeed("true")
+''; }
+---
+{
+  "file": "<temp_file_path>",
+  "report": [
+    {
+      "name": "ruff",
+      "note": "ruff found issues in an inline Python script",
+      "code": 29,
+      "severity": "Warn",
+      "diagnostics": [
+        {
+          "at": {
+            "from": {
+              "line": 4,
+              "column": 3
+            },
+            "to": {
+              "line": 4,
+              "column": 10
+            }
+          },
+          "message": "F821: Undefined name `machine`",
+          "suggestion": null,
+          "fixable": false,
+          "help": "See https://docs.astral.sh/ruff/rules/undefined-name"
+        }
+      ]
+    }
+  ]
+}

@@ -82,10 +82,18 @@ pub fn jq(program: &str, vars: &[String]) -> Option<Vec<Finding>> {
     if ok {
         return Some(Vec::new());
     }
-    // `jq: error: syntax error, unexpected ... at <top-level>, line 2:`
+    // `jq: error: syntax error, unexpected ... at <top-level>, line 2:`;
+    // lines without a location are hints for the error before; `f/1 is not
+    // defined` depends on the jq version (newer builtins), not reported
     let findings: Vec<Finding> = stderr
         .lines()
         .filter_map(|l| l.strip_prefix("jq: error: "))
+        .filter(|m| m.contains(" at <top-level>, line "))
+        .filter(|m| {
+            !m.split(" is not defined")
+                .next()
+                .is_some_and(|name| m.contains(" is not defined") && name.contains('/'))
+        })
         .map(|m| {
             let (message, line) = match m.rsplit_once(" at <top-level>, line ") {
                 // `line 2:` (jq 1.7), `line 2, column 1:` (jq 1.8)

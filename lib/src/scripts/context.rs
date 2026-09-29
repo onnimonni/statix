@@ -582,11 +582,22 @@ const TEST_DRIVER_SYMBOLS: &[&str] = &[
     "BaseMachine",
     "QemuMachine",
     "NspawnMachine",
-    "Machine",
     "t",
     "debug",
     "dump_machine_ssh",
 ];
+
+/// A machine's name in the test script (the driver's `pythonize_name`):
+/// `web-server` is `web_server`, `2nd` is `_nd`.
+fn pythonize(name: &str) -> String {
+    name.chars()
+        .enumerate()
+        .map(|(i, c)| {
+            let ok = c.is_ascii_alphabetic() || c == '_' || i > 0 && c.is_ascii_digit();
+            if ok { c } else { '_' }
+        })
+        .collect()
+}
 
 /// The attribute set of the NixOS test whose script `apv` is: its own
 /// (`testScript = ...` next to `nodes`), or for `let x = ''...'';` the test
@@ -661,7 +672,7 @@ pub fn nixos_test_symbols(s: &ast::Str) -> Option<(Vec<String>, bool)> {
         }
         match path.get(1) {
             // `nodes.server = ...`
-            Some(name) => machines.push(name.replace('-', "_")),
+            Some(name) => machines.push(pythonize(name)),
             // `nodes = { server = ...; inherit client; }`
             None => match b.value() {
                 Some(Expr::AttrSet(set)) => {
@@ -670,12 +681,12 @@ pub fn nixos_test_symbols(s: &ast::Str) -> Option<(Vec<String>, bool)> {
                             .and_then(|n| n.attrpath()?.attrs().next())
                             .and_then(|k| utils::attr_name(&k))
                         {
-                            machines.push(n.replace('-', "_"));
+                            machines.push(pythonize(&n));
                         } else if let Some(i) = ast::Inherit::cast(entry) {
                             machines.extend(
                                 i.attrs()
                                     .filter_map(|a| utils::attr_name(&a))
-                                    .map(|n| n.replace('-', "_")),
+                                    .map(|n| pythonize(&n)),
                             );
                         }
                     }
@@ -696,7 +707,7 @@ pub fn nixos_test_symbols(s: &ast::Str) -> Option<(Vec<String>, bool)> {
     {
         known = false;
     }
-    if machines.len() == 1 {
+    if machines.len() == 1 && machines[0] != "machine" {
         names.push("machine".into());
     }
     names.extend(machines);

@@ -1,0 +1,10 @@
+---
+source: bin/tests/ruff.rs
+---
+{ nodes."2nd-host" = {}; nodes."web.example" = {}; testScript = ''
+  _nd_host.succeed("true")
+  web_example.succeed("true")
+  machine.succeed("true")
+''; }
+---
+<temp_file_path>>4:3:W:29:[ruff] F821: Undefined name `machine`

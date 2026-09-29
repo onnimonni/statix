@@ -53,7 +53,8 @@ fn jq_option_values(option: &str) -> Option<usize> {
 }
 
 fn jq_program(c: &Simple) -> Option<(usize, Vec<String>)> {
-    // `--arg name value` may also come after the program
+    // `--arg name value` may also come after the program; `--arg "$k"`:
+    // which names exist isn't known
     let vars: Vec<String> = c
         .words
         .windows(2)
@@ -63,8 +64,8 @@ fn jq_program(c: &Simple) -> Option<(usize, Vec<String>)> {
                 Some("--arg" | "--argjson" | "--slurpfile" | "--rawfile")
             )
         })
-        .filter_map(|w| w[1].0.clone())
-        .collect();
+        .map(|w| w[1].0.clone())
+        .collect::<Option<_>>()?;
     let mut k = 1;
     while let Some(word) = c.words.get(k) {
         let text = word.0.as_deref()?;
@@ -72,8 +73,17 @@ fn jq_program(c: &Simple) -> Option<(usize, Vec<String>)> {
             k += 1;
             break;
         }
-        if !text.starts_with('-') || text == "-" {
+        // `'-.a'`, `'-1'`: a program, not an option
+        if !text.starts_with('-')
+            || text == "-"
+            || text[1..].starts_with(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+            || text[1..].starts_with(|ch: char| ch.is_ascii_digit())
+        {
             break;
+        }
+        // `-rL dir`: a value inside combined flags
+        if !text.starts_with("--") && text.len() > 2 && text.contains('L') {
+            return None;
         }
         k += 1 + jq_option_values(text)?;
     }
@@ -251,5 +261,9 @@ mod tests {
         assert_eq!(programs("awk -f/dev/null AGENTS.md"), []);
         assert_eq!(programs("jq() { echo \"$@\"; }; jq 'a b'"), []);
         assert_eq!(programs("gawk '@load \"x\"; BEGIN { }'"), []);
+        // fable review
+        assert_eq!(programs("jq --arg \"$key\" v '.[$key]' f"), []);
+        assert_eq!(programs("jq '-.a' f"), [(Tool::Jq, s("-.a"), vec![])]);
+        assert_eq!(programs("jq -rL dir '.a' f"), []);
     }
 }

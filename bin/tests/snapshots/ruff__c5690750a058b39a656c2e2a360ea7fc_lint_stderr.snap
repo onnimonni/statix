@@ -1,0 +1,16 @@
+---
+source: bin/tests/ruff.rs
+---
+{ nodes."2nd-host" = {}; nodes."web.example" = {}; testScript = ''
+  _nd_host.succeed("true")
+  web_example.succeed("true")
+  machine.succeed("true")
+''; }
+---
+[ruff] Warning: ruff found issues in an inline Python script
+   ╭─[ <temp_file_path>:4:3 ]
+   │
+ 4 │   machine.succeed("true")
+   │   ───┬───  
+   │      ╰───── F821: Undefined name machine
+───╯

@@ -32,8 +32,7 @@ source: bin/tests/ruff.rs
           },
           "message": "I001: Import block is un-sorted or un-formatted",
           "suggestion": null,
-          "fixable": false,
-          "help": "See https://docs.astral.sh/ruff/rules/unsorted-imports"
+          "fixable": true
         },
         {
           "at": {
@@ -47,9 +46,20 @@ source: bin/tests/ruff.rs
             }
           },
           "message": "F401: `os` imported but unused",
-          "suggestion": null,
-          "fixable": false,
-          "help": "See https://docs.astral.sh/ruff/rules/unused-import"
+          "suggestion": {
+            "at": {
+              "from": {
+                "line": 1,
+                "column": 40
+              },
+              "to": {
+                "line": 8,
+                "column": 3
+              }
+            },
+            "fix": "''\n  start_all()\n  web_server.wait_for_unit(\"nginx\")\n  with subtest(\"x\"):\n    machine.succeed(\"true\")\n  undefined_helper()\n''"
+          },
+          "fixable": true
         },
         {
           "at": {

@@ -585,11 +585,21 @@ pub fn check_string(s: &ast::Str, python: bool) -> Option<Checked> {
         return None;
     }
     let filename = current_dir().map(|d| d.join("inline.py"));
-    // NixOS tests: the driver's globals, defined on a first line for ruff
-    if let Some((names, known)) = context::nixos_test_symbols(s) {
+    // NixOS tests: the driver's globals, defined on a first line for ruff;
+    // positions and fixes moved back up by that line
+    let findings = if let Some((names, known)) = context::nixos_test_symbols(s) {
         let prelude = format!("{} = None  # statix: test driver\n", names.join(" = "));
         let text = format!("{prelude}{}", script.text);
-        let findings = check(lang, kind, &text, filename.as_deref(), &|l| {
+        // an error at the end: on the last line of code, not the `''` line
+        let last_code = script.text.trim_end().lines().count().max(1);
+        let up = |c: &Change| {
+            (c.line > 1).then(|| Change {
+                line: c.line - 1,
+                end_line: c.end_line - 1,
+                ..c.clone()
+            })
+        };
+        check(lang, kind, &text, filename.as_deref(), &|l| {
             l > 1 && script.line_has_interp(l - 1)
         })?
         .into_iter()
@@ -598,23 +608,21 @@ pub fn check_string(s: &ast::Str, python: bool) -> Option<Checked> {
         .filter(|f| !(f.code == "F811" && f.message.contains("from line 1")))
         // machines not written out: any name may be one
         .filter(|f| f.code != "F821" || known && !f.message.contains("`vlan"))
-        .map(|f| Finding {
-            line: f.line - 1,
-            end_line: f.end_line.saturating_sub(1).max(1),
-            fix: None,
-            ..f
+        .map(|f| {
+            let line = (f.line - 1).min(last_code);
+            Finding {
+                line,
+                end_line: (f.end_line - 1).clamp(line, last_code),
+                fix: f.fix.as_ref().and_then(|cs| cs.iter().map(up).collect()),
+                ..f
+            }
         })
-        .collect();
-        return Some(Checked {
-            script,
-            findings,
-            fixed: None,
-            fixed_findings: Vec::new(),
-        });
-    }
-    let findings = check(lang, kind, &script.text, filename.as_deref(), &|l| {
-        script.line_has_interp(l)
-    })?;
+        .collect()
+    } else {
+        check(lang, kind, &script.text, filename.as_deref(), &|l| {
+            script.line_has_interp(l)
+        })?
+    };
 
     // Try all fixes at once, fall back to one at a time.
     let together = non_overlapping(&findings);

@@ -2,6 +2,10 @@
   nixConfig = {
     abort-on-warn = true;
     allow-import-from-derivation = false;
+    extra-substituters = [ "https://onnimonni.cachix.org" ];
+    extra-trusted-public-keys = [
+      "onnimonni.cachix.org-1:bAPuRbTAiFMLNLoojt7KlqhQcpdeTN/OMIL22fP3LyM="
+    ];
   };
 
   inputs = {

@@ -38,6 +38,32 @@ $ statix fix --dry-run tests/c.nix
 
 ## Installation
 
+### This fork: use the prebuilt binaries
+
+Don't build this fork from source. CI pushes `statix` and `statix-scripts`
+for x86_64-linux, aarch64-linux and aarch64-darwin to
+[onnimonni.cachix.org](https://onnimonni.cachix.org):
+
+```shell
+cachix use onnimonni
+nix run github:onnimonni/statix#statix-scripts -- --help
+
+# or without cachix, trusting the flake's nixConfig
+nix run --accept-flake-config github:onnimonni/statix#statix-scripts -- --help
+```
+
+In a devenv project add the `statix` input and `cachix.pull = [ "onnimonni" ];`
+(see [As a git hook in a devenv project](#as-a-git-hook-in-a-devenv-project)).
+Don't make the input follow your `nixpkgs`: the cached binaries then no longer
+match and statix builds from source.
+
+`--option extra-substituters https://onnimonni.cachix.org` alone is not
+enough: without the trusted public key
+(`onnimonni.cachix.org-1:bAPuRbTAiFMLNLoojt7KlqhQcpdeTN/OMIL22fP3LyM=`)
+Nix silently ignores the cache and builds from source.
+
+### Upstream
+
 `statix` is available via a nix flake:
 
 ```shell

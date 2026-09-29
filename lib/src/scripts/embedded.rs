@@ -87,11 +87,25 @@ fn awk_program(c: &Simple) -> Option<usize> {
         let text = word.0.as_deref()?;
         match text {
             "--" => return Some(k + 1).filter(|k| *k < c.words.len()),
-            "-f" | "--file" => return None,
             "-e" | "--source" => return Some(k + 1),
             "-F" | "-v" | "--assign" | "--field-separator" => k += 2,
-            t if t.starts_with("-F") || t.starts_with("-v") => k += 1,
-            t if t.starts_with('-') && t.len() > 1 => k += 1,
+            // program files, attached sources (`-fprog`, `--source=...`),
+            // anything unknown: where the program is isn't clear
+            t if t.starts_with("-f")
+                || t.starts_with("--file")
+                || t.starts_with("-e")
+                || t.starts_with("--source") =>
+            {
+                return None;
+            }
+            t if t.starts_with("-F")
+                || t.starts_with("-v")
+                || t.starts_with("--assign=")
+                || t.starts_with("--field-separator=") =>
+            {
+                k += 1;
+            }
+            t if t.starts_with('-') && t.len() > 1 => return None,
             _ => return Some(k),
         }
     }
@@ -126,6 +140,10 @@ pub fn embedded(commands: &Commands) -> Vec<Embedded> {
     let mut out = Vec::new();
     for c in &commands.simples {
         let Some(name) = c.word(0) else { continue };
+        // `jq() { ...; }`: the script's own function
+        if commands.defined.contains(name) {
+            continue;
+        }
         let base = name.rsplit('/').next().unwrap_or(name);
         let found = match base {
             "jq" | "gojq" => jq_program(c).map(|(k, vars)| (Tool::Jq, k, vars)),
@@ -139,7 +157,13 @@ pub fn embedded(commands: &Commands) -> Vec<Embedded> {
         let Some((Some(program), start, end)) = c.words.get(k) else {
             continue;
         };
-        if program.contains(PLACEHOLDER) || program.trim().is_empty() {
+        // modules and extensions load files (`@load` runs native code)
+        let loads = match tool {
+            Tool::Jq => program.contains("import ") || program.contains("include "),
+            Tool::Awk => program.contains("@load") || program.contains("@include"),
+            Tool::Python => false,
+        };
+        if program.contains(PLACEHOLDER) || program.trim().is_empty() || loads {
             continue;
         }
         out.push(Embedded {
@@ -222,5 +246,10 @@ mod tests {
         // dynamic or interpolated programs aren't checked
         assert_eq!(programs("jq \"$filter\" x"), []);
         assert_eq!(programs("jq '.a.__nix_interp__' x"), []);
+        // codex review
+        assert_eq!(programs("awk --source='{print $1}' AGENTS.md"), []);
+        assert_eq!(programs("awk -f/dev/null AGENTS.md"), []);
+        assert_eq!(programs("jq() { echo \"$@\"; }; jq 'a b'"), []);
+        assert_eq!(programs("gawk '@load \"x\"; BEGIN { }'"), []);
     }
 }

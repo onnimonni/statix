@@ -1,0 +1,5 @@
+---
+source: bin/tests/ruff.rs
+---
+{ a = { nodes.server = {}; testScript = ''machine.start()''; }; b = { nodes.client = {}; testScript = ''machine.start()''; }; }
+---

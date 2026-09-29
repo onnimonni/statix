@@ -27,19 +27,32 @@ fn run(env: &str, program: &str, args: &[&OsStr], script: &str) -> Option<Vec<u8
 
 /// Run `program` (overridable with `env`) with `args` and no input:
 /// whether it succeeded, and its stderr.
+/// It's killed after 10 seconds (a checker must never hang statix).
 fn run_status(env: &str, program: &str, args: &[&OsStr]) -> Option<(bool, String)> {
+    use std::io::Read as _;
     let program = std::env::var_os(env).unwrap_or_else(|| program.into());
-    let output = Command::new(program)
+    let mut child = Command::new(program)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .ok()?;
-    Some((
-        output.status.success(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    ))
+    let start = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().ok()? {
+            break status;
+        }
+        if start.elapsed() > std::time::Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    };
+    let mut stderr = String::new();
+    child.stderr.take()?.read_to_string(&mut stderr).ok()?;
+    Some((status.success(), stderr))
 }
 
 fn error(line: usize, column: usize, code: &str, message: String) -> Finding {
@@ -56,15 +69,15 @@ fn error(line: usize, column: usize, code: &str, message: String) -> Finding {
     }
 }
 
-/// Compile errors of jq program `program`, without running it. `vars` are
-/// the `$names` its command line defines (`--arg name value`).
+/// Compile errors of jq program `program`, without running it: jq compiles
+/// it, then finds no input (stdin is empty, no `-n`). `vars` are the
+/// `$names` its command line defines (`--arg name value`).
 pub fn jq(program: &str, vars: &[String]) -> Option<Vec<Finding>> {
-    let wrapped = format!("if false then ({program}\n) else empty end");
-    let mut args: Vec<&OsStr> = vec![OsStr::new("-n")];
+    let mut args: Vec<&OsStr> = Vec::new();
     for v in vars {
         args.extend([OsStr::new("--argjson"), OsStr::new(v), OsStr::new("null")]);
     }
-    args.push(OsStr::new(&wrapped));
+    args.extend([OsStr::new("--"), OsStr::new(program)]);
     let (ok, stderr) = run_status("STATIX_JQ", "jq", &args)?;
     if ok {
         return Some(Vec::new());
@@ -85,13 +98,9 @@ pub fn jq(program: &str, vars: &[String]) -> Option<Vec<Finding>> {
                 ),
                 None => (m.to_string(), 1),
             };
-            let message = message.replace(" (Unix shell quoting issues?)", "");
-            // the wrapper's `)` after the program: it ended too early
-            let lines = program.lines().count().max(1);
-            if line > lines {
-                let message = message.replace("unexpected ')'", "unexpected end of the program");
-                return error(lines, 1, "jq", message);
-            }
+            let message = message
+                .replace(" (Unix shell quoting issues?)", "")
+                .replace("unexpected end of file", "unexpected end of the program");
             error(line, 1, "jq", message)
         })
         .collect();

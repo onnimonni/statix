@@ -588,66 +588,109 @@ const TEST_DRIVER_SYMBOLS: &[&str] = &[
     "dump_machine_ssh",
 ];
 
+/// The attribute set of the NixOS test whose script `apv` is: its own
+/// (`testScript = ...` next to `nodes`), or for `let x = ''...'';` the test
+/// with `testScript = x;` (or `inherit testScript;`).
+fn owning_test(apv: &AttrpathValue) -> Option<SyntaxNode> {
+    let key = utils::attr_name(&apv.attrpath()?.attrs().last()?)?;
+    if key == "testScript" && is_nixos_test(apv) {
+        return apv.syntax().parent();
+    }
+    if apv.syntax().parent()?.kind() != SyntaxKind::NODE_LET_IN {
+        return None;
+    }
+    let root = apv.syntax().ancestors().last()?;
+    root.descendants().find_map(|n| {
+        // `testScript = x;`
+        if let Some(t) = AttrpathValue::cast(n.clone())
+            && t.attrpath()
+                .and_then(|p| p.attrs().last())
+                .and_then(|k| utils::attr_name(&k))
+                .as_deref()
+                == Some("testScript")
+            && is_nixos_test(&t)
+            && t.value().is_some_and(|v| v.syntax().text() == key.as_str())
+        {
+            return t.syntax().parent();
+        }
+        // `inherit testScript;`
+        let inherit = ast::Inherit::cast(n)?;
+        let inherits = key == "testScript"
+            && inherit.from().is_none()
+            && inherit
+                .attrs()
+                .any(|a| utils::attr_name(&a).as_deref() == Some("testScript"));
+        let set = inherit.syntax().parent()?;
+        let has_nodes = set.children().filter_map(AttrpathValue::cast).any(|b| {
+            b.attrpath()
+                .and_then(|p| p.attrs().next())
+                .and_then(|k| utils::attr_name(&k))
+                .is_some_and(|k| k == "nodes" || k == "containers")
+        });
+        (inherits && has_nodes).then_some(set)
+    })
+}
+
 /// For a NixOS `testScript`: the names the test driver defines (its globals,
 /// one per machine, `machine` when there's one), and whether the machines
-/// are known (`nodes.<name>` written out in the file).
+/// are known (`nodes.<name>` written out in the test).
 #[must_use]
 pub fn nixos_test_symbols(s: &ast::Str) -> Option<(Vec<String>, bool)> {
     let apv = s.syntax().ancestors().find_map(AttrpathValue::cast)?;
-    let key = apv.attrpath()?.attrs().last()?;
-    // `let testScript = ''...''; in { inherit testScript; nodes = ...; }`:
-    // a let binding that is Python is used as the test's script
-    let in_let = apv
-        .syntax()
-        .parent()
-        .is_some_and(|p| p.kind() == SyntaxKind::NODE_LET_IN);
-    if utils::attr_name(&key)? != "testScript" || !(is_nixos_test(&apv) || in_let) {
-        return None;
-    }
-    let root = s.syntax().ancestors().last()?;
+    let test = owning_test(&apv)?;
     let mut names: Vec<String> = TEST_DRIVER_SYMBOLS
         .iter()
         .map(|n| (*n).to_string())
         .collect();
     let mut machines: Vec<String> = Vec::new();
     let mut known = true;
-    for b in root.descendants().filter_map(AttrpathValue::cast) {
-        let Some(path) = utils::enclosing_attrpath(b.syntax()) else {
+    // only this test's nodes, not another test's in the same file
+    for b in test.children().filter_map(AttrpathValue::cast) {
+        let Some(path) = b.attrpath().map(|p| {
+            p.attrs()
+                .filter_map(|a| utils::attr_name(&a))
+                .collect::<Vec<_>>()
+        }) else {
             continue;
         };
-        let Some(i) = path.iter().position(|k| k == "nodes" || k == "containers") else {
+        if !matches!(
+            path.first().map(String::as_str),
+            Some("nodes" | "containers")
+        ) {
             continue;
-        };
-        match path.get(i + 1) {
-            // `nodes.server = ...`, `nodes = { server = ...; }`
-            Some(name) => {
-                let name = name.replace('-', "_");
-                if !machines.contains(&name) {
-                    machines.push(name);
-                }
-            }
-            // `nodes = lib.genAttrs ...`: not written out
+        }
+        match path.get(1) {
+            // `nodes.server = ...`
+            Some(name) => machines.push(name.replace('-', "_")),
+            // `nodes = { server = ...; inherit client; }`
             None => match b.value() {
                 Some(Expr::AttrSet(set)) => {
-                    // `nodes = { inherit server; }`
-                    for name in set
-                        .syntax()
-                        .children()
-                        .filter_map(ast::Inherit::cast)
-                        .flat_map(|i| i.attrs())
-                        .filter_map(|a| utils::attr_name(&a))
-                    {
-                        machines.push(name.replace('-', "_"));
+                    for entry in set.syntax().children() {
+                        if let Some(n) = AttrpathValue::cast(entry.clone())
+                            .and_then(|n| n.attrpath()?.attrs().next())
+                            .and_then(|k| utils::attr_name(&k))
+                        {
+                            machines.push(n.replace('-', "_"));
+                        } else if let Some(i) = ast::Inherit::cast(entry) {
+                            machines.extend(
+                                i.attrs()
+                                    .filter_map(|a| utils::attr_name(&a))
+                                    .map(|n| n.replace('-', "_")),
+                            );
+                        }
                     }
                 }
+                // `nodes = lib.genAttrs ...`: not written out
                 _ => known = false,
             },
         }
     }
+    machines.sort();
+    machines.dedup();
     known &= !machines.is_empty();
-    // `${helpers}` on its own line may define functions the script calls
-    let text = super::nixstr::Script::new(s).text;
-    if text
+    // `${helpers}` starting a line may define functions the script calls
+    let rendered = super::nixstr::Script::new(s).text;
+    if rendered
         .lines()
         .any(|l| l.trim_start().starts_with(super::nixstr::PLACEHOLDER))
     {

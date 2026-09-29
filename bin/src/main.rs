@@ -16,6 +16,12 @@ fn main_() -> Result<(), StatixErr> {
         SubCommand::Explain(config) => explain::main::main(&config),
         SubCommand::Dump(_) => dump::main::main(),
         SubCommand::List(_) => list::main::main(),
+        SubCommand::NixpkgsIndex(config) => {
+            for line in lib::github::index_nixpkgs(&config.nixpkgs) {
+                println!("{line}");
+            }
+            Ok(())
+        }
     }
 }
 

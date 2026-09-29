@@ -116,6 +116,18 @@ pub fn with_current_file<R>(path: Option<&Path>, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// The file being linted.
+#[must_use]
+pub fn current_file() -> Option<PathBuf> {
+    CURRENT_FILE.with(|c| c.borrow().clone())
+}
+
+/// Whether the file being linted is `rel` (a path ending).
+#[must_use]
+pub fn current_file_ends_with(rel: &str) -> bool {
+    CURRENT_FILE.with(|c| c.borrow().as_ref().is_some_and(|p| p.ends_with(rel)))
+}
+
 /// Whether the file being linted is named `name`.
 #[must_use]
 pub fn current_file_is(name: &str) -> bool {

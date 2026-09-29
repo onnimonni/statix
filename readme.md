@@ -318,6 +318,17 @@ one variable per node (`nodes.web-server` is `web_server`) and the rest.
 When the nodes aren't written out, or the script pulls in code with
 `${...}`, undefined names aren't reported.
 
+### Software nixpkgs already packages
+
+`packaged_in_nixpkgs` reports software built from GitHub
+(`fetchFromGitHub`, release downloads with `fetchurl`) that nixpkgs
+packages in the same or a newer version, and suggests `pkgs.x` (or
+`pkgs.x.overrideAttrs` to change it). A source pinned to a commit, or fetched
+without building it, gets a hint. The index of nixpkgs' GitHub sources is
+built with the statix package from the nixpkgs it's built with
+(`statix nixpkgs-index <nixpkgs>`, `STATIX_NIXPKGS_GITHUB`), so versions are
+those of that nixpkgs. Inside nixpkgs itself the lint is quiet.
+
 ### Structured files written as text
 
 `structured_text_file` reports JSON, YAML, TOML and INI files written as
@@ -419,6 +430,7 @@ undeclared_command
 structured_text_file
 shell_idiom
 embedded_code
+packaged_in_nixpkgs
 ```
 
 All lints are enabled by default. Generate a minimal config

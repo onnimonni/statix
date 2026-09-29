@@ -33,6 +33,9 @@ pub enum SubCommand {
     Dump(Dump),
     /// List all available lints
     List(List),
+    /// Print the index of GitHub sources nixpkgs packages (for building)
+    #[clap(hide = true)]
+    NixpkgsIndex(NixpkgsIndex),
 }
 
 #[derive(Parser, Debug)]
@@ -258,6 +261,12 @@ pub struct Dump {}
 
 #[derive(Parser, Debug)]
 pub struct List {}
+
+#[derive(Parser, Debug)]
+pub struct NixpkgsIndex {
+    /// A nixpkgs checkout
+    pub nixpkgs: PathBuf,
+}
 
 #[derive(Debug, Copy, Clone, Default)]
 pub enum OutFormat {

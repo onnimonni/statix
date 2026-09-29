@@ -1,4 +1,5 @@
 #![recursion_limit = "1024"]
+pub mod github;
 mod lints;
 mod make;
 mod scripts;

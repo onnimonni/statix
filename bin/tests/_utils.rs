@@ -14,6 +14,7 @@ pub fn test_cli(expression: &str, args: &[&str]) -> anyhow::Result<String> {
         // same results on every machine
         .env("STATIX_SYSTEMS", "x86_64-linux,aarch64-darwin")
         .env_remove("STATIX_PROGRAMS")
+        .env_remove("STATIX_NIXPKGS_GITHUB")
         .args(args)
         .arg(fixture.path())
         .output()?;
@@ -30,6 +31,7 @@ pub fn test_cli_stdin(input: &str, args: &[&str]) -> anyhow::Result<String> {
     let mut child = Command::new(env!("CARGO_BIN_EXE_statix"))
         .env("STATIX_SYSTEMS", "x86_64-linux,aarch64-darwin")
         .env_remove("STATIX_PROGRAMS")
+        .env_remove("STATIX_NIXPKGS_GITHUB")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -29,5 +29,6 @@ lints! {
     undeclared_command,
     structured_text_file,
     shell_idiom,
-    embedded_code
+    embedded_code,
+    packaged_in_nixpkgs
 }

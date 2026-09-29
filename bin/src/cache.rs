@@ -147,11 +147,22 @@ fn epoch(lints: &LintMap, conf: &ConfFile) -> String {
     let conf = toml::to_string(conf).unwrap_or_default();
     lib::content_hash(
         format!(
-            "{binary}\n{}\n{conf}\n{}\n{}\n{}",
+            "{binary}\n{}\n{conf}\n{}\n{}\n{}\n{}",
             names.join(","),
             lib::tool_versions(),
             // package indexes and systems `undeclared_command` checks
             programs_fingerprint(),
+            // the nixpkgs GitHub index (a store path, or a file to hash)
+            std::env::var("STATIX_NIXPKGS_GITHUB").map_or_else(
+                |_| String::new(),
+                |p| if p.starts_with("/nix/store/") {
+                    p
+                } else {
+                    fs::read(&p)
+                        .map(|b| lib::content_hash(&b))
+                        .unwrap_or_default()
+                }
+            ),
             std::env::var("STATIX_SYSTEMS").unwrap_or_default()
         )
         .as_bytes(),

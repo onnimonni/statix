@@ -56,6 +56,11 @@ in
               | sort -u > $out
             test -s $out
           '';
+      # GitHub sources nixpkgs packages, for `packaged_in_nixpkgs`
+      githubIndex = pkgs.runCommand "statix-nixpkgs-github" { } ''
+        ${lib.getExe pkgs.statix} nixpkgs-index ${pkgs.path} > $out
+        test -s $out
+      '';
       programs = lib.concatStringsSep ":" (
         lib.mapAttrsToList (system: hash: "${system}=${programIndex system hash}") indexHashes
       );
@@ -77,7 +82,8 @@ in
                 pkgs.jq
                 pkgs.gawk
               ]
-            } --set-default STATIX_PROGRAMS ${lib.escapeShellArg programs}
+            } --set-default STATIX_PROGRAMS ${lib.escapeShellArg programs} \
+              --set-default STATIX_NIXPKGS_GITHUB ${githubIndex}
           '';
           meta.mainProgram = "statix";
         };

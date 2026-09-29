@@ -92,7 +92,8 @@ Reports commands shell scripts in Nix call but don't declare, and commands/paths
 
 ## `packaged_in_nixpkgs` lint (W35)
 
-- Warn when a derivation builds a GitHub repository (`fetchFromGitHub`, github.com `fetchurl`/`fetchzip` URLs) that nixpkgs packages in the same or a newer version (Nix `compareVersions`); hint for commit-pinned sources, bare source fetches (`pkgs.x.src`) and monorepos (list what nixpkgs builds from it). Nothing when nixpkgs is older.
-- Same package = `pname` matches the attribute's last component, `python3Packages.*` for Python builders.
-- The index (`owner/repo<TAB>attr<TAB>version<TAB>file`) comes from statically parsing nixpkgs (`statix nixpkgs-index`, ~4 s), built into `statix-scripts` from `pkgs.path`; attributes from `pkgs/by-name`, package-set directories, else `pname`; helper derivations nested in another use their own `pname`. It's part of the cache epoch.
-- Quiet inside nixpkgs (the linted file is an indexed package file).
+- Warn when a derivation builds a GitHub repository (`fetchFromGitHub` as its `src`, directly or through `let src = ...; inherit src;`, or github.com archive/release URLs) that nixpkgs packages in the same or a newer version (Nix `compareVersions`, newest matching attribute). Hints: commit pins (even with `version`), bare `fetchFromGitHub` outside derivations (`pkgs.x.src`), nixpkgs packages that are broken, unfree or for one OS family, unknown versions, monorepos (list what nixpkgs builds). Nothing when nixpkgs is older, for patches/`passthru`/auxiliary fetches, inside `overrideAttrs`/`override`, or with `# statix disable=packaged_in_nixpkgs` on the line before.
+- Same package = `pname` like the attribute's name or nixpkgs' `pname`, `_`/`-` and case ignored; `buildPythonPackage` matches `python3Packages.*`, `buildPythonApplication` both, others only top-level.
+- Name resolution follows Nix scoping (`let`, `rec`, lambda shadowing, `inherit` = unknown, `finalAttrs.x` through the builder's lambda).
+- The index (`owner/repo<TAB>attr<TAB>version<TAB>file<TAB>pname<TAB>flags`) comes from statically parsing nixpkgs (`statix nixpkgs-index`, ~2 s), built into `statix-scripts` from `pkgs.path`; only attributes known from the file's place (`pkgs/by-name`, package-set directories); only a derivation's main `src`. It's part of the cache epoch.
+- Quiet inside a nixpkgs checkout (a parent has `pkgs/top-level/all-packages.nix`).

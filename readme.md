@@ -327,7 +327,9 @@ packages in the same or a newer version, and suggests `pkgs.x` (or
 without building it, gets a hint. The index of nixpkgs' GitHub sources is
 built with the statix package from the nixpkgs it's built with
 (`statix nixpkgs-index <nixpkgs>`, `STATIX_NIXPKGS_GITHUB`), so versions are
-those of that nixpkgs. Inside nixpkgs itself the lint is quiet.
+those of that nixpkgs. Inside nixpkgs itself the lint is quiet; overrides
+(`pkgs.x.overrideAttrs`) aren't reported, and `# statix
+disable=packaged_in_nixpkgs` on the line before silences one on purpose.
 
 ### Structured files written as text
 

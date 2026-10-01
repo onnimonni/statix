@@ -10,7 +10,7 @@
 }:
 rustPlatform.buildRustPackage {
   pname = "statix";
-  version = "0.7.1";
+  version = "0.7.2";
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [

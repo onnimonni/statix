@@ -9,7 +9,7 @@
         {
           "uses": "cachix/install-nix-action@master",
           "with": {
-            "extra_nix_config": "keep-env-derivations = true\nkeep-outputs = true\n",
+            "extra_nix_config": "# Strict evaluation for CI only, as flake nixConfig would make every user answer prompts\nabort-on-warn = true\nallow-import-from-derivation = false\nkeep-env-derivations = true\nkeep-outputs = true\n",
             "github_access_token": "${{ secrets.GITHUB_TOKEN }}"
           }
         },

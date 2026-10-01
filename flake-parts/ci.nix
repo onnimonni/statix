@@ -21,6 +21,9 @@ in
                 uses = "cachix/install-nix-action@master";
                 "with" = {
                   extra_nix_config = ''
+                    # Strict evaluation for CI only, as flake nixConfig would make every user answer prompts
+                    abort-on-warn = true
+                    allow-import-from-derivation = false
                     keep-env-derivations = true
                     keep-outputs = true
                   '';

@@ -1,0 +1,9 @@
+{
+  "version": "0.7.1",
+  "hashes": {
+    "aarch64-apple-darwin": "sha256-tt0QfOUiT5foiDKC8p6UHHGlLIl03dduI8btNsho9u8=",
+    "aarch64-unknown-linux-musl": "sha256-P3XevWZmosI1eZL5bhnoYQodbOysghFug1wlUNGs0sw=",
+    "x86_64-apple-darwin": "sha256-2i98yC3RDXrjJhlRY3ENGK49ZEFMoFWP/RmBhohEtPg=",
+    "x86_64-unknown-linux-musl": "sha256-uvCiHQYfviDeA+FgI6A2nKFNTK0KpBM/68b7IDetJCY="
+  }
+}

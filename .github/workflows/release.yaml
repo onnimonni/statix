@@ -82,6 +82,28 @@
         }
       }
     },
+    "prebuilt-hashes": {
+      "needs": "release",
+      "permissions": {
+        "contents": "write"
+      },
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "uses": "actions/checkout@v5",
+          "with": {
+            "ref": "${{ github.event.repository.default_branch }}"
+          }
+        },
+        {
+          "env": {
+            "BRANCH": "${{ github.event.repository.default_branch }}",
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "gh release download \"$GITHUB_REF_NAME\" --repo \"$GITHUB_REPOSITORY\" -p SHA256SUMS -D \"$RUNNER_TEMP\"\nwhile read -r hex file; do\n  target=${file#statix-}\n  printf '%s\\t%s\\n' \"${target%.tar.gz}\" \"sha256-$(printf '%s' \"$hex\" | xxd -r -p | base64)\"\ndone < \"$RUNNER_TEMP/SHA256SUMS\" \\\n  | jq -Rn --arg version \"${GITHUB_REF_NAME#v}\" \\\n    '{version: $version, hashes: ([inputs | split(\"\\t\") | {key: .[0], value: .[1]}] | from_entries)}' \\\n  > flake-parts/prebuilt.json\ngit diff --quiet && exit 0\ngit config user.name \"github-actions[bot]\"\ngit config user.email \"41898282+github-actions[bot]@users.noreply.github.com\"\ngit commit -am \"chore: prebuilt binaries for $GITHUB_REF_NAME\"\ngit pull --rebase origin \"$BRANCH\"\ngit push origin \"HEAD:$BRANCH\"\n"
+        }
+      ]
+    },
     "release": {
       "needs": "binaries",
       "permissions": {

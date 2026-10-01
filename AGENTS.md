@@ -15,6 +15,7 @@ These requirements come from the maintainer (onnimonni) and from design reviews 
 
 - Every push to `devenv` builds `packages.statix` and `packages.statix-scripts` (statix wrapped with shellcheck and ruff) for x86_64-linux, aarch64-linux and aarch64-darwin, and pushes them to Cachix. The cache name comes from the repository variable `CACHIX_CACHE` (never hardcode it); the token from the `CACHIX_AUTH_TOKEN` secret.
 - `v*` tags attach standalone binaries (static musl on Linux, native on macOS arm64/x86_64) and SHA256SUMS to a GitHub release.
+- `packages.prebuilt` (`flake-parts/prebuilt.nix`) wraps those release binaries. Its version and hashes live in `flake-parts/prebuilt.json`; the `prebuilt-hashes` release job rewrites them from SHA256SUMS and pushes to `devenv`. Don't edit them by hand.
 - Keep `bin/Cargo.toml`, `packages/statix.nix` and `Cargo.lock` versions in sync with the tag. Bump the version without re-resolving unrelated dependencies.
 
 ## Linting scripts in and next to Nix code

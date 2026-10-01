@@ -165,6 +165,40 @@ in
               }
             ];
           };
+          # Point `packages.prebuilt` at the new release binaries
+          prebuilt-hashes = {
+            needs = "release";
+            runs-on = "ubuntu-latest";
+            permissions.contents = "write";
+            steps = [
+              {
+                uses = "actions/checkout@v5";
+                "with".ref = "\${{ github.event.repository.default_branch }}";
+              }
+              {
+                env = {
+                  GH_TOKEN = "\${{ github.token }}";
+                  BRANCH = "\${{ github.event.repository.default_branch }}";
+                };
+                run = ''
+                  gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p SHA256SUMS -D "$RUNNER_TEMP"
+                  while read -r hex file; do
+                    target=''${file#statix-}
+                    printf '%s\t%s\n' "''${target%.tar.gz}" "sha256-$(printf '%s' "$hex" | xxd -r -p | base64)"
+                  done < "$RUNNER_TEMP/SHA256SUMS" \
+                    | jq -Rn --arg version "''${GITHUB_REF_NAME#v}" \
+                      '{version: $version, hashes: ([inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries)}' \
+                    > flake-parts/prebuilt.json
+                  git diff --quiet && exit 0
+                  git config user.name "github-actions[bot]"
+                  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+                  git commit -am "chore: prebuilt binaries for $GITHUB_REF_NAME"
+                  git pull --rebase origin "$BRANCH"
+                  git push origin "HEAD:$BRANCH"
+                '';
+              }
+            ];
+          };
         };
       };
 

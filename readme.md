@@ -273,7 +273,12 @@ statix check .`. Give a coding agent what's left with
 
 Binaries without Nix (statix only; install `shellcheck` and `ruff`
 separately for the script lints) are attached to
-[releases](https://github.com/onnimonni/statix/releases).
+[releases](https://github.com/onnimonni/statix/releases). The flake wraps them
+as `prebuilt`, which needs neither a compiler nor Cachix:
+
+```shell
+nix run github:onnimonni/statix#prebuilt -- --help
+```
 
 ### Undeclared commands
 

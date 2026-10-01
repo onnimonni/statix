@@ -21,9 +21,11 @@ in
                 uses = "cachix/install-nix-action@master";
                 "with" = {
                   extra_nix_config = ''
-                    # Strict evaluation for CI only, as flake nixConfig would make every user answer prompts
+                    # Kept out of the flake: its nixConfig made every `nix run` ask about each setting
                     abort-on-warn = true
                     allow-import-from-derivation = false
+                    extra-substituters = https://onnimonni.cachix.org
+                    extra-trusted-public-keys = onnimonni.cachix.org-1:bAPuRbTAiFMLNLoojt7KlqhQcpdeTN/OMIL22fP3LyM=
                     keep-env-derivations = true
                     keep-outputs = true
                   '';
@@ -35,7 +37,7 @@ in
                 "with".primary-key = "nix-\${{ runner.os }}";
               }
               {
-                run = "nix --accept-flake-config flake check --print-build-logs";
+                run = "nix flake check --print-build-logs";
               }
             ];
           };

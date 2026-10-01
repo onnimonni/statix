@@ -1,11 +1,4 @@
 {
-  nixConfig = {
-    extra-substituters = [ "https://onnimonni.cachix.org" ];
-    extra-trusted-public-keys = [
-      "onnimonni.cachix.org-1:bAPuRbTAiFMLNLoojt7KlqhQcpdeTN/OMIL22fP3LyM="
-    ];
-  };
-
   inputs = {
     flake-parts = {
       url = "github:hercules-ci/flake-parts";

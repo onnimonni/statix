@@ -48,8 +48,8 @@ for x86_64-linux, aarch64-linux and aarch64-darwin to
 cachix use onnimonni
 nix run github:onnimonni/statix#statix-scripts -- --help
 
-# or without cachix, trusting the flake's nixConfig
-nix run --accept-flake-config github:onnimonni/statix#statix-scripts -- --help
+# or without cachix: the release binary, statix only
+nix run github:onnimonni/statix#prebuilt -- --help
 ```
 
 In a devenv project add the `statix` input and `cachix.pull = [ "onnimonni" ];`

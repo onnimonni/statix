@@ -9,7 +9,7 @@
         {
           "uses": "cachix/install-nix-action@master",
           "with": {
-            "extra_nix_config": "# Strict evaluation for CI only, as flake nixConfig would make every user answer prompts\nabort-on-warn = true\nallow-import-from-derivation = false\nkeep-env-derivations = true\nkeep-outputs = true\n",
+            "extra_nix_config": "# Kept out of the flake: its nixConfig made every `nix run` ask about each setting\nabort-on-warn = true\nallow-import-from-derivation = false\nextra-substituters = https://onnimonni.cachix.org\nextra-trusted-public-keys = onnimonni.cachix.org-1:bAPuRbTAiFMLNLoojt7KlqhQcpdeTN/OMIL22fP3LyM=\nkeep-env-derivations = true\nkeep-outputs = true\n",
             "github_access_token": "${{ secrets.GITHUB_TOKEN }}"
           }
         },
@@ -20,7 +20,7 @@
           }
         },
         {
-          "run": "nix --accept-flake-config flake check --print-build-logs"
+          "run": "nix flake check --print-build-logs"
         }
       ]
     }

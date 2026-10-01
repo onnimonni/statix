@@ -114,7 +114,7 @@ in
                 };
               }
               {
-                run = "nix build --accept-flake-config --print-build-logs .#statix .#statix-scripts";
+                run = "nix build --print-build-logs .#statix .#statix-scripts";
               }
             ];
           };

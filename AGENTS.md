@@ -11,7 +11,7 @@ These requirements come from the maintainer (onnimonni) and from design reviews 
 
 ## Releases and binaries
 
-- Agents needing the statix binary: always pull it prebuilt from the `onnimonni` Cachix cache (devenv input + `cachix.pull = [ "onnimonni" ]`, or `cachix use onnimonni`, or `nix run --accept-flake-config`). Never `nix build`/`cargo install` just to get the binary; `--option extra-substituters` without the trusted key builds from source.
+- Agents needing the statix binary: always pull it prebuilt from the `onnimonni` Cachix cache (devenv input + `cachix.pull = [ "onnimonni" ]`, or `cachix use onnimonni`; `nix run github:onnimonni/statix#prebuilt` for the release binary). The flake has no `nixConfig`, so `nix run` never prompts. Never `nix build`/`cargo install` just to get the binary; `--option extra-substituters` without the trusted key builds from source.
 
 - Every push to `devenv` builds `packages.statix` and `packages.statix-scripts` (statix wrapped with shellcheck and ruff) for x86_64-linux, aarch64-linux and aarch64-darwin, and pushes them to Cachix. The cache name comes from the repository variable `CACHIX_CACHE` (never hardcode it); the token from the `CACHIX_AUTH_TOKEN` secret.
 - `v*` tags attach standalone binaries (static musl on Linux, native on macOS arm64/x86_64) and SHA256SUMS to a GitHub release.

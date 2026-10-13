@@ -4,18 +4,18 @@ These requirements come from the maintainer (onnimonni) and from design reviews 
 
 ## Repository and branches
 
-- Development happens on the `devenv` branch (the fork's default branch). Releases are tagged from it.
-- Pull requests to upstream (molybdenumsoftware/statix) come from their own branches, never from `devenv`, so development can continue. They must not contain fork-only things: the release workflow (`flake-parts/release.nix`, `.github/workflows/release.yaml`), the fork's version number, the README section about installing from this fork / Cachix, or this file.
+- Development happens on the `main` branch (the fork's default branch). Releases are tagged from it.
+- Pull requests to upstream (molybdenumsoftware/statix) come from their own branches, never from `main`, so development can continue. They must not contain fork-only things: the release workflow (`flake-parts/release.nix`, `.github/workflows/release.yaml`), the fork's version number, the README section about installing from this fork / Cachix, or this file.
 - CI workflows are generated from Nix (`flake-parts/*.nix` via the `files` module): edit the Nix and run `write-files`, never the YAML.
 - `nix flake check` (formatting, generated files, clippy pedantic, tests, dogfood) must pass before pushing.
 
 ## Releases and binaries
 
-- Agents needing the statix binary: always pull it prebuilt from the `onnimonni` Cachix cache (devenv input + `cachix.pull = [ "onnimonni" ]`, or `cachix use onnimonni`; `nix run github:onnimonni/statix#prebuilt` for the release binary). The flake has no `nixConfig`, so `nix run` never prompts. Never `nix build`/`cargo install` just to get the binary; `--option extra-substituters` without the trusted key builds from source.
+- Agents needing the statix binary: use the release binaries (`nix run github:onnimonni/statix#prebuilt-scripts`, or the devenv input's `prebuilt-scripts`); for source builds pull from the `onnimonni` Cachix cache (`cachix.pull = [ "onnimonni" ]` / `cachix use onnimonni`). The flake has no `nixConfig`, so `nix run` never prompts. Never `nix build`/`cargo install` just to get the binary; `--option extra-substituters` without the trusted key builds from source.
 
-- Every push to `devenv` builds `packages.statix` and `packages.statix-scripts` (statix wrapped with shellcheck and ruff) for x86_64-linux, aarch64-linux and aarch64-darwin, and pushes them to Cachix. The cache name comes from the repository variable `CACHIX_CACHE` (never hardcode it); the token from the `CACHIX_AUTH_TOKEN` secret.
+- Every push to `main` builds `packages.statix` and `packages.statix-scripts` (statix wrapped with shellcheck and ruff) for x86_64-linux, aarch64-linux and aarch64-darwin, and pushes them to Cachix. The cache name comes from the repository variable `CACHIX_CACHE` (never hardcode it); the token from the `CACHIX_AUTH_TOKEN` secret.
 - `v*` tags attach standalone binaries (static musl on Linux, native on macOS arm64/x86_64) and SHA256SUMS to a GitHub release.
-- `packages.prebuilt` (`flake-parts/prebuilt.nix`) wraps those release binaries. Its version and hashes live in `flake-parts/prebuilt.json`; the `prebuilt-hashes` release job rewrites them from SHA256SUMS and pushes to `devenv`. Don't edit them by hand.
+- `packages.prebuilt` (`flake-parts/prebuilt.nix`) wraps those release binaries; `packages.prebuilt-scripts` wraps it like `statix-scripts`. Both are the README's default install. The `prebuilt` job builds and runs them on every push. Its version and hashes live in `flake-parts/prebuilt.json`; the `prebuilt-hashes` release job rewrites them from SHA256SUMS and pushes to `main`. Don't edit them by hand.
 - Keep `bin/Cargo.toml`, `packages/statix.nix` and `Cargo.lock` versions in sync with the tag. Bump the version without re-resolving unrelated dependencies.
 
 ## Linting scripts in and next to Nix code
@@ -37,7 +37,7 @@ These requirements come from the maintainer (onnimonni) and from design reviews 
 
 ## Documentation
 
-- The README documents installing from this fork in a devenv project (`devenv.yaml` inputs incl. `git-hooks`, `cachix.pull`), the git hook (`statix fix --staged` then `statix check --staged`), the script lints, `-o agent`, the cache and `--staged`/`--changed`. Keep it updated with every user-visible change, and test snippets exactly as written.
+- The README documents installing from this fork in a devenv project (`devenv.yaml` inputs incl. `git-hooks`, `prebuilt-scripts`), the git hook (`statix fix --staged` then `statix check --staged`), the script lints, `-o agent`, the cache and `--staged`/`--changed`. Keep it updated with every user-visible change, and test snippets exactly as written.
 
 ## `undeclared_command` lint
 

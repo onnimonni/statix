@@ -40,25 +40,33 @@ $ statix fix --dry-run tests/c.nix
 
 ### This fork: use the prebuilt binaries
 
-Don't build this fork from source. CI pushes `statix` and `statix-scripts`
-for x86_64-linux, aarch64-linux and aarch64-darwin to
-[onnimonni.cachix.org](https://onnimonni.cachix.org):
+Every `v*` release attaches standalone binaries (static musl on Linux, native
+on macOS) to [releases](https://github.com/onnimonni/statix/releases). The
+flake wraps them, so nothing is compiled and no Cachix is needed:
+
+- `#prebuilt-scripts` (recommended): the release binary with shellcheck,
+  ruff, jq, gawk and the program indexes for the script lints
+- `#prebuilt`: the release binary only
+- `#statix-scripts` / `#statix`: built from source (CI pushes them for
+  x86_64-linux, aarch64-linux and aarch64-darwin to
+  [onnimonni.cachix.org](https://onnimonni.cachix.org))
 
 ```shell
+nix run github:onnimonni/statix#prebuilt-scripts -- --help
+
+# install into your profile
+nix profile add github:onnimonni/statix#prebuilt-scripts
+
+# from source, fetched from Cachix
 cachix use onnimonni
 nix run github:onnimonni/statix#statix-scripts -- --help
-
-# or without cachix: the release binary, statix only
-nix run github:onnimonni/statix#prebuilt -- --help
 ```
 
-In a devenv project add the `statix` input and `cachix.pull = [ "onnimonni" ];`
+In a devenv project add the `statix` input and use `prebuilt-scripts`
 (see [As a git hook in a devenv project](#as-a-git-hook-in-a-devenv-project)).
-Don't make the input follow your `nixpkgs`: the cached binaries then no longer
-match and statix builds from source.
 
-`--option extra-substituters https://onnimonni.cachix.org` alone is not
-enough: without the trusted public key
+Building from source? `--option extra-substituters https://onnimonni.cachix.org`
+alone is not enough: without the trusted public key
 (`onnimonni.cachix.org-1:bAPuRbTAiFMLNLoojt7KlqhQcpdeTN/OMIL22fP3LyM=`)
 Nix silently ignores the cache and builds from source.
 
@@ -235,13 +243,10 @@ devenv inputs add statix github:onnimonni/statix
 ```nix
 { pkgs, inputs, ... }:
 let
-  # statix with shellcheck and ruff for the script lints
-  statix = inputs.statix.packages.${pkgs.stdenv.system}.statix-scripts;
+  # release binary with shellcheck and ruff for the script lints
+  statix = inputs.statix.packages.${pkgs.stdenv.system}.prebuilt-scripts;
 in
 {
-  # prebuilt binaries, pushed by CI
-  cachix.pull = [ "onnimonni" ];
-
   git-hooks.hooks.statix = {
     enable = true;
     package = statix;
@@ -271,14 +276,9 @@ Run it on the whole repository with `prek run statix --all-files` (or
 statix check .`. Give a coding agent what's left with
 `statix check -o agent .`.
 
-Binaries without Nix (statix only; install `shellcheck` and `ruff`
-separately for the script lints) are attached to
-[releases](https://github.com/onnimonni/statix/releases). The flake wraps them
-as `prebuilt`, which needs neither a compiler nor Cachix:
-
-```shell
-nix run github:onnimonni/statix#prebuilt -- --help
-```
+Without Nix, download a binary from
+[releases](https://github.com/onnimonni/statix/releases) and install
+`shellcheck` and `ruff` separately for the script lints.
 
 ### Undeclared commands
 

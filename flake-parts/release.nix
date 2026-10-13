@@ -36,7 +36,12 @@ let
 in
 {
   perSystem =
-    { pkgs, lib, ... }:
+    {
+      pkgs,
+      lib,
+      config,
+      ...
+    }:
     let
       programIndex =
         system: hash:
@@ -57,22 +62,20 @@ in
             test -s $out
           '';
       # GitHub sources nixpkgs packages, for `packaged_in_nixpkgs`
-      githubIndex = pkgs.runCommand "statix-nixpkgs-github" { } ''
-        ${lib.getExe pkgs.statix} nixpkgs-index ${pkgs.path} > $out
-        test -s $out
-      '';
+      githubIndex =
+        statix:
+        pkgs.runCommand "statix-nixpkgs-github" { } ''
+          ${lib.getExe statix} nixpkgs-index ${pkgs.path} > $out
+          test -s $out
+        '';
       programs = lib.concatStringsSep ":" (
         lib.mapAttrsToList (system: hash: "${system}=${programIndex system hash}") indexHashes
       );
-    in
-    {
-      packages = {
-        default = pkgs.statix;
-        inherit (pkgs) statix;
-        # statix with shellcheck, ruff and the program indexes for the script lints
-        statix-scripts = pkgs.symlinkJoin {
-          name = "statix-scripts-${pkgs.statix.version}";
-          paths = [ pkgs.statix ];
+      withScripts =
+        statix:
+        pkgs.symlinkJoin {
+          name = "${statix.pname}-scripts-${statix.version}";
+          paths = [ statix ];
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postBuild = ''
             wrapProgram $out/bin/statix --prefix PATH : ${
@@ -83,17 +86,26 @@ in
                 pkgs.gawk
               ]
             } --set-default STATIX_PROGRAMS ${lib.escapeShellArg programs} \
-              --set-default STATIX_NIXPKGS_GITHUB ${githubIndex}
+              --set-default STATIX_NIXPKGS_GITHUB ${githubIndex statix}
           '';
           meta.mainProgram = "statix";
         };
+    in
+    {
+      packages = {
+        default = pkgs.statix;
+        inherit (pkgs) statix;
+        # statix with shellcheck, ruff and the program indexes for the script lints
+        statix-scripts = withScripts pkgs.statix;
+        # the same around the release binary: nothing to compile, no Cachix needed
+        prebuilt-scripts = withScripts config.packages.prebuilt;
       };
 
       files.file.${path}.source = pkgs.writers.writeJSON "gh-actions-workflow-release.yaml" {
         name = "Release";
         on = {
           push = {
-            branches = [ "devenv" ];
+            branches = [ "main" ];
             tags = [ "v*" ];
           };
           workflow_dispatch = { };
@@ -115,6 +127,22 @@ in
               }
               {
                 run = "nix build --print-build-logs .#statix .#statix-scripts";
+              }
+            ];
+          };
+          # `packages.prebuilt(-scripts)` fetch the latest release binaries: check they still build and run
+          prebuilt = {
+            strategy.matrix.os = nixSystems;
+            runs-on = "\${{ matrix.os }}";
+            steps = [
+              { uses = "actions/checkout@v5"; }
+              { uses = "cachix/install-nix-action@master"; }
+              {
+                run = ''
+                  nix build --print-build-logs .#prebuilt .#prebuilt-scripts
+                  nix run .#prebuilt -- check flake.nix
+                  nix run .#prebuilt-scripts -- check flake.nix
+                '';
               }
             ];
           };
@@ -175,6 +203,7 @@ in
                 uses = "actions/checkout@v5";
                 "with".ref = "\${{ github.event.repository.default_branch }}";
               }
+              { uses = "cachix/install-nix-action@master"; }
               {
                 env = {
                   GH_TOKEN = "\${{ github.token }}";
@@ -190,6 +219,8 @@ in
                       '{version: $version, hashes: ([inputs | split("\t") | {key: .[0], value: .[1]}] | from_entries)}' \
                     > flake-parts/prebuilt.json
                   git diff --quiet && exit 0
+                  nix build --print-build-logs .#prebuilt .#prebuilt-scripts
+                  nix run .#prebuilt -- check flake.nix
                   git config user.name "github-actions[bot]"
                   git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
                   git commit -am "chore: prebuilt binaries for $GITHUB_REF_NAME"
